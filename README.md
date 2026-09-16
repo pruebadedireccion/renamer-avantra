@@ -2,7 +2,6 @@
 
 **Renombrado masivo de documentos PDF con formato de salida configurable**
 
-By: Red Avantra ®
 
 ---
 
