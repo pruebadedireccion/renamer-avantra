@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.spec
+config.json
+*.xlsx
+!examples/*.xlsx
+.DS_Store
+Thumbs.db

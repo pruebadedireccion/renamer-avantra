@@ -1,0 +1,15 @@
+EJEMPLOS - DATOS 100% FICTICIOS
+===============================
+Estos archivos ilustran el formato esperado de entrada:
+
+- PDFs con nombre: [ID de origen] [descripcion].pdf
+  El ID de origen debe iniciar con el patron:
+  4 digitos + 2 letras + numeros + 1 letra + 1 digito
+  Ejemplo ficticio: 2026XX840820X1
+
+- mapeo_ejemplo.xlsx: tabla de correspondencia con 2 columnas
+  (el programa detecta las columnas automaticamente).
+  IDs de destino ficticios: 9900000001, 9900000002...
+
+Nota: los 2 archivos 2026XX840826X1 (OFICIO y ANEXO) pertenecen
+a la misma operacion de destino: ilustran la numeracion automatica.
