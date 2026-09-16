@@ -1,10 +1,35 @@
+# --- Python ---
 __pycache__/
 *.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- Build / empaquetado ---
 build/
 dist/
 *.spec
+
+# --- Configuracion local del usuario ---
 config.json
+
+# --- Datos: Excels reales excluidos (solo ejemplos ficticios) ---
 *.xlsx
 !examples/*.xlsx
+
+# --- IDEs / editores ---
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Logs y temporales ---
+*.log
+*.tmp
+~$*
+
+# --- Sistema operativo ---
 .DS_Store
 Thumbs.db
+desktop.ini
