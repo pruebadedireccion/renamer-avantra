@@ -335,23 +335,19 @@ def validar_plan(
 ) -> tuple[bool, list[str]]:
     """
     Valida el plan antes de ejecutar. Devuelve (permitido, problemas).
+
+    Semantica v1.1.0 (ejecucion parcial):
+        - SIN MAPEO no bloquea: esos archivos quedan en el registro de
+          pendientes para seguimiento.
+        - "YA EXISTE en destino" no bloquea: en re-ejecuciones los archivos
+          ya copiados se omiten (ejecutar_copias ya los salta).
+        - COLISION sigue bloqueando: dos archivos hacia el mismo nombre
+          en la misma corrida indican datos inconsistentes.
     """
     problemas: list[str] = []
-
     ok = [p for p in plan if p["estado"] == OK and p["destino"]]
 
-    if requerir_mapeo:
-        sin_mapeo = [p for p in plan if p["estado"] == SIN_MAPEO]
-        if sin_mapeo:
-            problemas.append(
-                f"{len(sin_mapeo)} id(s) de origen SIN correspondencia en el Excel"
-            )
-            for p in sin_mapeo[:10]:
-                problemas.append(f"  SIN MAPEO: {p['archivo']} ({p['detalle']})")
-            if len(sin_mapeo) > 10:
-                problemas.append(f"  ... y {len(sin_mapeo) - 10} mas")
-
-    # Colisiones de nombre destino
+    # Colisiones de nombre destino (unico bloqueo duro)
     vistos: dict[str, list[str]] = {}
     for p in ok:
         vistos.setdefault(p["destino"], []).append(p["archivo"])
@@ -359,12 +355,97 @@ def validar_plan(
         if len(origs) > 1:
             problemas.append(f"COLISION: {d} <- {', '.join(origs)}")
 
-    # Destinos ya existentes de una corrida anterior
+    # Avisos informativos (no bloquean)
+    sin_mapeo = [p for p in plan if p["estado"] == SIN_MAPEO]
+    if sin_mapeo:
+        problemas.append(
+            f"AVISO: {len(sin_mapeo)} archivo(s) sin correspondencia quedaran "
+            "pendientes (se registran en pendientes_correccion.csv)"
+        )
     ya_existen = [p for p in ok if (destino_dir / p["destino"]).exists()]
-    for p in ya_existen:
-        problemas.append(f"YA EXISTE en destino: {p['destino']}")
+    if ya_existen:
+        problemas.append(
+            f"AVISO: {len(ya_existen)} archivo(s) ya existen en el destino "
+            "y se omitiran (re-ejecucion)"
+        )
 
-    return (len(problemas) == 0, problemas)
+    return (not any(p.startswith("COLISION") for p in problemas), problemas)
+
+
+def accion_sugerida(detalle: str) -> str:
+    """Sugerencia de correccion segun el motivo del pendiente."""
+    d = detalle.lower()
+    if "sin correspondencia" in d:
+        return (
+            "Obtenga el identificador de destino de este radicado en el "
+            "sistema, agreguelo al Excel de correspondencia y vuelva a "
+            "ejecutar (los ya renombrados se omiten solos)."
+        )
+    if "duplicado" in d:
+        return (
+            "Este archivo es una descarga repetida. Verifique cual copia "
+            "es la correcta, elimine la sobrante de la carpeta origen y "
+            "vuelva a ejecutar."
+        )
+    if "no es pdf" in d:
+        return "No es un PDF: excluyalo de la carpeta origen."
+    if "no inicia" in d:
+        return (
+            "El nombre no inicia con el identificador de origen. Verifique "
+            "el nombre del archivo; si corresponde, renombrelo anteponiendo "
+            "el radicado y vuelva a ejecutar."
+        )
+    return "Revise el motivo y corrija el archivo en la carpeta origen."
+
+
+def escribir_pendientes(
+    plan: list[dict], ruta_pendientes: Path, ids_pendientes_ruta: Path | None = None
+) -> tuple[int, int]:
+    """
+    Genera el registro de seguimiento de pendientes:
+        - pendientes_correccion.csv: archivo, id origen, motivo, accion sugerida
+        - ids_pendientes.txt (opcional): ids de origen sin correspondencia,
+          en lotes, listos para re-consultar en el sistema
+
+    Devuelve (total_pendientes, ids_pendientes_unicos).
+    """
+    pendientes = [
+        p
+        for p in plan
+        if p["estado"] in (SIN_MAPEO, ANOMALIA)
+        or (p["estado"] == OK and not p["destino"])
+    ]
+
+    with open(ruta_pendientes, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f, delimiter=";")
+        w.writerow(["archivo_original", "id_origen", "motivo", "accion_sugerida"])
+        for p in pendientes:
+            motivo = p["detalle"] or p["estado"]
+            w.writerow(
+                [
+                    p["archivo"],
+                    p["id_origen"] or "",
+                    motivo,
+                    accion_sugerida(motivo),
+                ]
+            )
+
+    # Lista de ids sin correspondencia para re-consulta
+    ids_sin = sorted(
+        {
+            p["id_origen"]
+            for p in pendientes
+            if p["estado"] == SIN_MAPEO and p["id_origen"]
+        }
+    )
+    if ids_pendientes_ruta is not None:
+        lineas = [
+            ", ".join(ids_sin[i : i + LOTE_CONSULTA])
+            for i in range(0, len(ids_sin), LOTE_CONSULTA)
+        ]
+        ids_pendientes_ruta.write_text("\n".join(lineas), encoding="utf-8")
+
+    return len(pendientes), len(ids_sin)
 
 
 def ejecutar_copias(
