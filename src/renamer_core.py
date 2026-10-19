@@ -488,6 +488,24 @@ def accion_sugerida(detalle: str) -> str:
     return "Revise el motivo y corrija el archivo en la carpeta origen."
 
 
+def accion_corta(detalle: str) -> str:
+    """Version breve de la accion sugerida para la tabla de la interfaz."""
+    d = detalle.lower()
+    if "sin correspondencia" in d:
+        return "Complete el Excel y re-ejecute"
+    if "conflicto" in d:
+        return "Verifique el destino correcto en el Excel"
+    if "danado" in d or "incompleta" in d:
+        return "Vuelva a descargar el PDF"
+    if "duplicado" in d:
+        return "Elimine la copia repetida"
+    if "no es pdf" in d:
+        return "Excluya el archivo de la carpeta"
+    if "no inicia" in d:
+        return "Renombre el archivo con el radicado"
+    return "Revise el archivo en la carpeta origen"
+
+
 def escribir_pendientes(
     plan: list[dict], ruta_pendientes: Path, ids_pendientes_ruta: Path | None = None
 ) -> tuple[int, int]:

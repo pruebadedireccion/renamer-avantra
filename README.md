@@ -3,58 +3,73 @@
 **Renombrado masivo de documentos PDF con formato de salida configurable**
 
 [![CI](https://github.com/pruebadedireccion/renamer-avantra/actions/workflows/ci.yml/badge.svg)](https://github.com/pruebadedireccion/renamer-avantra/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/pruebadedireccion/renamer-avantra?label=release)](https://github.com/pruebadedireccion/renamer-avantra/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+
+*By: Red Avantra ®*
 
 ---
 
-Renamer Avantra es una herramienta de escritorio para renombrar grandes
-volúmenes de archivos PDF a partir de una **tabla de correspondencia**
-(Excel). Está pensada para procesos documentales donde los archivos
-llegan con un identificador de origen (por ejemplo, un número de
-radicado) y el sistema de destino exige otro formato de nombre.
+## El problema
 
-La característica diferencial es el **formato de salida configurable**:
-el usuario define la anatomía del nombre final con una plantilla
-parametrizable y ve el resultado en vivo antes de procesar nada.
+En muchos procesos documentales los archivos llegan con un identificador
+de origen (por ejemplo, un número de radicado) y el sistema de destino
+exige otro formato de nombre. Renombrar cientos o miles de PDFs a mano
+es lento, propenso a errores y difícil de auditar.
 
-![Ventana principal de Renamer Avantra](docs/captura_ventana.png)
+**Renamer Avantra** resuelve ese paso intermedio: toma los PDFs y una
+tabla de correspondencia en Excel, y genera los archivos con el nombre
+exacto que exige el sistema de destino, con simulación previa,
+trazabilidad y seguimiento de pendientes.
+
+![Ventana principal de Renamer Avantra](docs/01_ventana_principal.png)
 
 ## Características
 
-- **Formato de salida configurable** con plantilla de tokens:
-  - `{id}` — identificador de destino (viene del Excel de correspondencia)
-  - `{n}` — consecutivo cuando una operación recibe varios archivos
-  - `{c}` — código fijo configurable
-- **Ejemplo en vivo**: la ventana muestra la transformación
-  `original -> final` mientras se edita el patrón
-- **Doble validación**: simulación completa antes de ejecutar (dry-run)
-  y bloqueo automático ante colisiones de nombre
-- **Ejecución parcial con seguimiento**: si algunos archivos tienen
-  problemas, los válidos se renombran y los demás quedan en
-  `pendientes_correccion.csv` con la acción sugerida para corregirlos;
-  al re-ejecutar, los ya renombrados se omiten automáticamente
-- **Detección de mapeos conflictivos**: si el Excel asigna dos destinos
-  distintos al mismo identificador de origen, esos archivos quedan
-  pendientes en lugar de ir a la operación equivocada
-- **Validación de PDFs**: detecta archivos dañados o descargas
-  incompletas antes de copiarlos
-- **Tabla de resultados con filtros** (todo / listos / pendientes /
-  anomalías) y buscador, además del registro detallado
-- **Cancelación** de procesos largos y **deshacer** de la última
-  ejecución (solo copias registradas en el reporte)
-- **Errores explicados**: bloqueos de Excel/OneDrive, plantillas vacías
-  o archivos inválidos se informan con instrucciones y reintentos
-- **Trazabilidad total**: cada ejecución genera un `reporte.csv` con la
-  relación archivo original -> archivo final y su estado
-- **Operación no destructiva**: los archivos originales nunca se
-  modifican; solo se crean copias renombradas en la carpeta destino
-- **Sin instalación**: ejecutable portable para Windows (disponible en
-  Releases), sin permisos de administrador
-- **Interfaz gráfica** (CustomTkinter) y **consola** (CLI) con las
-  mismas capacidades
+**Formato de salida configurable**
+
+- Plantilla de tokens: `{id}`, `{n}` y `{c}`
+- Ejemplo en vivo de la transformación mientras se edita el patrón
+- Validación en tiempo real (tokens, orden y presencia obligatoria de `{id}`)
+- La configuración se conserva entre sesiones
+
+**Control del proceso**
+
+- Simulación completa (dry-run) antes de copiar nada
+- Tabla de resultados con filtros (todo / listos / pendientes / anomalías),
+  buscador y pestaña de registro detallado
+- Cancelación de procesos largos
+- Deshacer la última ejecución (solo copias registradas en el reporte)
+- Arrastrar y soltar carpetas o el Excel sobre la ventana
+
+**Seguridad de los datos**
+
+- Detección de mapeos conflictivos: si el Excel asigna dos destinos
+  distintos al mismo identificador, esos archivos quedan pendientes en
+  lugar de ir a la operación equivocada
+- Validación del contenido de los PDFs (encabezado `%PDF`): detecta
+  archivos dañados o descargas incompletas
+- Anomalías detectadas antes de copiar (duplicados de descarga, nombres
+  fuera de patrón)
+- Operación no destructiva: los originales nunca se modifican
+
+**Trazabilidad**
+
+- `reporte.csv` por ejecución: archivo original, nombre final, estado y detalle
+- `pendientes_correccion.csv`: motivo y acción sugerida por cada archivo que
+  no se pudo renombrar
+- `ids_pendientes.txt`: identificadores sin correspondencia, listos para
+  re-consultar
+- Re-ejecución segura: los archivos ya renombrados se omiten solos
+
+## Capturas
+
+| Resultados filtrados por pendientes | Registro de una ejecución |
+|---|---|
+| ![Pendientes](docs/02_resultados_pendientes.png) | ![Registro](docs/03_registro_ejecucion.png) |
 
 ## Formato de salida: cómo funciona
-
-El nombre final se construye con una plantilla. Ejemplos:
 
 | Patrón | Resultado | Cuándo usarlo |
 |---|---|---|
@@ -62,17 +77,15 @@ El nombre final se construye con una plantilla. Ejemplos:
 | `{id}-{n}` | `9900000001-1.pdf` | Numeración explícita siempre |
 | `{id}-{c}-{n}` | `9900000001-ZREE-1.pdf` | Con código de formato |
 
-Si una misma operación de destino recibe varios archivos, `{n}` se
-numera automáticamente (1, 2, 3...) en orden alfabético. Si recibe uno
-solo, no hay colisión y el patrón produce un único nombre limpio.
+- `{id}`: identificador de destino (viene del Excel de correspondencia)
+- `{n}`: consecutivo automático cuando una operación recibe varios archivos
+  (orden alfabético del nombre original)
+- `{c}`: código fijo configurable (por ejemplo `ZREE`)
 
-La aplicación valida el patrón en vivo:
-- exige la presencia de `{id}` (sin él, las operaciones serían
-  indistinguibles)
-- rechaza tokens desconocidos
-- exige que `{n}` vaya después de `{id}`
+Si una operación de destino recibe un solo archivo, `{n}` vale 1 y el
+patrón produce un único nombre. Si recibe varios, se numeran 1, 2, 3...
 
-## Estructura esperada de entrada
+## Entrada esperada
 
 ```
 carpeta_origen/
@@ -81,12 +94,10 @@ carpeta_origen/
 └── ...
 ```
 
-- Los nombres deben iniciar con el identificador de origen
-  (patrón configurable: por defecto `4 dígitos + 2 letras + números +
-  1 letra + 1 dígito`, ejemplo ficticio `2026XX840820X1`).
-- El Excel de correspondencia contiene dos columnas (el programa las
-  detecta automáticamente por su contenido, sin importar el orden ni
-  el título):
+Los nombres deben iniciar con el identificador de origen (por defecto:
+4 dígitos + 2 letras + números + 1 letra + 1 dígito). El Excel de
+correspondencia contiene dos columnas; la aplicación detecta cuál es cuál
+por su contenido, sin importar el orden ni el título:
 
 | ID de origen | ID de destino |
 |---|---|
@@ -96,27 +107,29 @@ carpeta_origen/
 ## Flujo de uso
 
 ```
-1. INVENTARIAR -> lee los nombres, valida estructura y genera la lista
-                 de identificadores (ids_para_consulta.txt)
-2. (manual)    -> consulta los identificadores en el sistema fuente y
-                 descarga el Excel de correspondencia
+1. INVENTARIAR -> valida nombres y genera ids_para_consulta.txt
+2. (manual)    -> consulta los identificadores y descarga el Excel
 3. SIMULAR     -> muestra el plan completo sin modificar nada
 4. EJECUTAR    -> copia los archivos renombrados + reporte.csv
 5. (manual)    -> carga la carpeta destino en el sistema de destino
 ```
 
-La lista de identificadores se genera en lotes de 200, listo para
-pegar en consultas que limitan el volumen por búsqueda.
+La lista de identificadores se genera en lotes de 200 para consultas que
+limitan el volumen por búsqueda.
 
 ## Uso — Interfaz gráfica
+
+Descarga el ejecutable portable desde
+[Releases](https://github.com/pruebadedireccion/renamer-avantra/releases)
+y haz doble clic (no requiere instalación ni permisos de administrador).
+La primera vez Windows puede mostrar el aviso de SmartScreen:
+*Más información → Ejecutar de todas formas*.
+
+Desde el código:
 
 ```bash
 python src/renamer_gui.py
 ```
-
-O descarga el ejecutable portable desde
-[Releases](https://github.com/pruebadedireccion/renamer-avantra/releases)
-y haz doble clic (no requiere instalación).
 
 ## Uso — Consola (CLI)
 
@@ -138,37 +151,54 @@ python src/renamer_cli.py --carpeta CARPETA --mapeo mapeo.xlsx \
 
 ## Arquitectura
 
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Carpeta origen │     │  renamer_core    │     │ Carpeta destino │
-│  PDFs con id    │ --> │  inventario      │ --> │ archivos con    │
-│  de origen      │     │  mapeo + plan    │     │ nombre final    │
-└─────────────────┘     │  validaciones    │     │ + reporte.csv   │
-                        └────────┬─────────┘     └─────────────────┘
-                                 │
-                    ┌────────────┴────────────┐
-                    │                         │
-             ┌──────┴──────┐           ┌──────┴──────┐
-             │  GUI        │           │  CLI        │
-             │ (ventana)   │           │ (consola)   │
-             └─────────────┘           └─────────────┘
+```mermaid
+flowchart LR
+    A[Carpeta origen<br/>PDFs con id] --> B[renamer_core<br/>inventario · mapeo · plan<br/>validaciones · numeración]
+    B --> C[Carpeta destino<br/>nombres finales]
+    B --> D[reporte.csv<br/>pendientes_correccion.csv]
+    B --> E[GUI<br/>CustomTkinter]
+    B --> F[CLI<br/>consola]
 ```
 
-El diseño separa la **lógica** (`renamer_core.py`) de las interfaces
-(`renamer_gui.py` / `renamer_cli.py`): las validaciones, la numeración
-y la trazabilidad viven en un único módulo probado, compartido por
-ambas interfaces.
+La lógica vive en un único módulo probado (`renamer_core.py`) y las
+interfaces (`renamer_gui.py` y `renamer_cli.py`) solo la presentan. Esto
+garantiza que la GUI y la consola se comporten exactamente igual.
 
-## Salvaguardas incorporadas
+## Seguridad de la información
 
-| Situación | Comportamiento |
-|---|---|
-| Archivo duplicado de descarga (`archivo (1).pdf`) | Detectado como anomalía, detiene el proceso |
-| Archivo sin el identificador de origen | Anomalía, detiene el proceso |
-| Id sin correspondencia en el Excel | SIN MAPEO, detiene la ejecución |
-| Dos archivos con el mismo nombre destino | Colisión detectada, ejecución bloqueada |
-| Archivo destino ya existente (re-ejecución) | Aviso y omisión de la copia |
-| Patrón inválido | Aviso en vivo, no permite avanzar |
+- **Procesamiento 100 % local:** la aplicación no tiene conexión a red,
+  no envía telemetría y no descarga recursos externos.
+- **No destructiva:** solo copia; los archivos originales nunca se borran
+  ni se modifican.
+- **Confirmación explícita:** toda copia exige confirmación previa y todo
+  destino ya existente se omite (nunca se sobrescribe).
+- **Doble validación:** simulación completa antes de ejecutar y bloqueo
+  ante colisiones de nombre.
+- **Deshacer con verificación:** elimina únicamente copias registradas en
+  el `reporte.csv`, comprobando tamaño contra el original.
+- **Trazabilidad auditable:** cada ejecución deja evidencia en CSV.
+- **Ejecutable sin permisos:** no requiere administrador ni instalación.
+
+## Privacidad y datos
+
+- El repositorio contiene únicamente **datos ficticios** (`ACME`,
+  `2026XX…`, `9900000…`): no hay información personal ni de clientes.
+- El archivo de configuración `config.json` es local y está excluido del
+  repositorio.
+- Las capturas de este README usan rutas y datos de ejemplo.
+
+## Calidad y pruebas
+
+- **24 pruebas automatizadas** (pytest) sobre inventario, mapeo, plan,
+  numeración, validaciones, ejecución parcial, cancelación, deshacer y
+  traducción de errores.
+- **Integración continua** con GitHub Actions en Windows (Python 3.11 y 3.12).
+- Ejecutar localmente:
+
+```bash
+pip install -r requirements.txt pytest
+pytest tests -q
+```
 
 ## Instalación (modo desarrollo)
 
@@ -179,17 +209,33 @@ pip install -r requirements.txt
 python src/renamer_gui.py
 ```
 
-Requisitos: Python 3.10+ en Windows.
+Requisitos: Windows y Python 3.11 o superior.
 
 ## Stack tecnológico
 
 | Tecnología | Uso |
 |---|---|
-| Python 3.11 | Lógica de negocio |
-| CustomTkinter | Interfaz gráfica moderna |
-| openpyxl | Lectura de Excel de correspondencia |
-| Expresiones regulares | Extracción y validación de identificadores |
+| Python 3.11+ | Lógica de negocio |
+| CustomTkinter | Interfaz gráfica |
+| openpyxl | Lectura del Excel de correspondencia |
+| tkinterdnd2 | Arrastrar y soltar (opcional) |
+| Expresiones regulares | Validación de identificadores |
 | PyInstaller | Empaquetado portable (Release) |
+| pytest + GitHub Actions | Pruebas e integración continua |
+
+## Historial de cambios
+
+Ver [CHANGELOG.md](CHANGELOG.md).
+
+## Seguridad
+
+Para reportar vulnerabilidades, ver [SECURITY.md](SECURITY.md).
+
+## Autor
+
+**Daniel Mauricio Reina Diaz** — *Red Avantra ®*
+
+- GitHub: [@pruebadedireccion](https://github.com/pruebadedireccion)
 
 ## Licencia
 

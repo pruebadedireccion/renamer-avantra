@@ -37,6 +37,7 @@ except Exception:  # pragma: no cover - entorno sin tkinterdnd2
     TIENE_DND = False
 
 TITULO = "Renamer Avantra - Renombrado Masivo de Documentos"
+VERSION = "1.2.2"
 
 # --- Paleta ------------------------------------------------------------------
 AZUL_OSCURO = "#1F3864"
@@ -78,7 +79,7 @@ def tamano_inicial() -> str:
         ancho = usuario32.GetSystemMetrics(0)
         alto = usuario32.GetSystemMetrics(1)
         w = max(900, min(int(ancho * 0.64), 1360))
-        h = max(680, min(int(alto * 0.72), 940))
+        h = max(680, min(int(alto * 0.80), 1040))
         return f"{w}x{h}"
     except Exception:
         return "1080x780"
@@ -156,6 +157,10 @@ class App:
             font=FUENTE_SUBTITULO,
             text_color=AZUL_CLARO,
         ).pack(side="left", pady=10)
+        ctk.CTkLabel(
+            cabezal, text=f"v{VERSION}", font=FUENTE_ESTADO,
+            text_color=AZUL_CLARO,
+        ).pack(side="right", padx=(0, 20))
 
         cont = ctk.CTkFrame(marco, fg_color="transparent")
         cont.pack(fill="both", expand=True, padx=14, pady=8)
@@ -163,7 +168,7 @@ class App:
         # --- 1. CARPETAS ------------------------------------------------------
         s1 = self._seccion(cont, "1. CARPETAS")
         interno = ctk.CTkFrame(s1, fg_color="white", corner_radius=0)
-        interno.pack(fill="x", padx=16, pady=(2, 10))
+        interno.pack(fill="x", padx=16, pady=(2, 8))
         self.ent_origen = self._campo_ruta(
             interno, 0, "Carpeta de PDFs (origen):", self.var_origen,
             al_cambiar=self._vista_previa_carpeta,
@@ -191,17 +196,10 @@ class App:
             self._validar_excel_seleccionado()
 
         # --- 2. FORMATO DE SALIDA ---------------------------------------------
-        s2 = self._seccion(cont, "2. FORMATO DE SALIDA")
-        fila_titulo = ctk.CTkFrame(s2, fg_color="transparent")
-        fila_titulo.pack(fill="x", padx=16, pady=(6, 0))
-        ctk.CTkButton(
-            fila_titulo, text="  ?  ", width=30, height=24, corner_radius=12,
-            font=FUENTE_BASE_NEG, fg_color=AZUL_CLARO, hover_color="#C4D2EE",
-            text_color=AZUL_OSCURO, command=self._mostrar_ayuda_formato,
-        ).pack(side="right")
+        s2 = self._seccion(cont, "2. FORMATO DE SALIDA", con_accion=True)
 
         fmt = ctk.CTkFrame(s2, fg_color="white", corner_radius=0)
-        fmt.pack(fill="x", padx=16, pady=(2, 10))
+        fmt.pack(fill="x", padx=16, pady=(2, 6))
         fmt.columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
@@ -211,6 +209,7 @@ class App:
         self.ent_patron = ctk.CTkEntry(
             fmt, textvariable=self.var_patron, font=("Consolas", 13),
             height=34, corner_radius=8, border_color="#C9D2E3",
+            fg_color="white", text_color=GRIS_TXT,
         )
         self.ent_patron.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=4)
         self.ent_patron.bind("<KeyRelease>", lambda _e: self._actualizar_ejemplo())
@@ -222,12 +221,13 @@ class App:
             fmt, textvariable=self.var_codigo, font=("Consolas", 13),
             height=34, corner_radius=8, width=180,
             placeholder_text="(opcional, ej. ZREE)",
+            fg_color="white", text_color=GRIS_TXT,
         )
         self.ent_codigo.grid(row=1, column=1, sticky="w", pady=4)
         self.ent_codigo.bind("<KeyRelease>", lambda _e: self._actualizar_ejemplo())
 
         piezas = ctk.CTkFrame(fmt, fg_color="transparent")
-        piezas.grid(row=2, column=1, sticky="w", pady=(2, 4))
+        piezas.grid(row=1, column=2, sticky="w", padx=(10, 0), pady=4)
         ctk.CTkLabel(
             piezas, text="Piezas: ", font=FUENTE_ESTADO, text_color=GRIS_TXT
         ).pack(side="left")
@@ -240,7 +240,7 @@ class App:
             ).pack(side="left", padx=(0, 6))
 
         ej = ctk.CTkFrame(s2, fg_color="#F4F6FA", corner_radius=8)
-        ej.pack(fill="x", padx=16, pady=(2, 12))
+        ej.pack(fill="x", padx=16, pady=(2, 8))
         self.lbl_ejemplo = ctk.CTkLabel(
             ej, text="", font=("Consolas", 14), text_color=GRIS_TXT,
             justify="left", anchor="w",
@@ -255,7 +255,7 @@ class App:
         # --- 3. ACCIONES --------------------------------------------------------
         s3 = self._seccion(cont, "3. ACCIONES  (en orden)")
         acciones = ctk.CTkFrame(s3, fg_color="transparent")
-        acciones.pack(fill="x", padx=16, pady=(2, 12))
+        acciones.pack(fill="x", padx=16, pady=(2, 8))
         acciones.columnconfigure((0, 1, 2), weight=1)
 
         self.btn_inv = ctk.CTkButton(
@@ -300,12 +300,12 @@ class App:
         )
         self.progreso.set(0)
         self.progreso.grid(row=1, column=0, columnspan=5, sticky="ew",
-                           pady=(10, 0))
+                           pady=(6, 0))
 
         # --- 4. RESULTADOS ------------------------------------------------------
         s4 = self._seccion(cont, "4. RESULTADOS")
         self.tabs = ctk.CTkTabview(s4, fg_color="white")
-        self.tabs.pack(fill="both", expand=True, padx=14, pady=(2, 12))
+        self.tabs.pack(fill="both", expand=True, padx=14, pady=(2, 8))
         tab_plan = self.tabs.add("Plan")
         tab_log = self.tabs.add("Registro")
 
@@ -320,19 +320,19 @@ class App:
         )
         self.seg_filtro.pack(side="left", padx=(0, 10))
 
-        self.ent_buscar = ctk.CTkEntry(
-            barra, placeholder_text="Buscar archivo, destino o motivo...",
-            font=FUENTE_ESTADO, height=30, corner_radius=8,
-            border_color="#C9D2E3",
-        )
-        self.ent_buscar.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        self.ent_buscar.bind("<KeyRelease>", lambda _e: self._refrescar_tabla())
-
         ctk.CTkButton(
             barra, text="Re-verificar", command=self._accion_simular,
             fg_color=AZUL_CLARO, hover_color="#C4D2EE", text_color=AZUL_OSCURO,
             font=FUENTE_ESTADO, corner_radius=8, height=30, width=110,
-        ).pack(side="right")
+        ).pack(side="right", padx=(10, 0))
+
+        self.ent_buscar = ctk.CTkEntry(
+            barra, placeholder_text="Buscar archivo, destino o motivo...",
+            font=FUENTE_ESTADO, height=30, corner_radius=8,
+            border_color="#C9D2E3", fg_color="white", text_color=GRIS_TXT,
+        )
+        self.ent_buscar.pack(side="left", fill="x", expand=True, padx=(0, 0))
+        self.ent_buscar.bind("<KeyRelease>", lambda _e: self._refrescar_tabla())
 
         # Tabla de resultados
         estilo = ttk.Style(self.root)
@@ -426,15 +426,24 @@ class App:
 
     # --- Helpers de construccion -----------------------------------------------
 
-    def _seccion(self, contenedor, titulo) -> ctk.CTkFrame:
+    def _seccion(self, contenedor, titulo, con_accion=False) -> ctk.CTkFrame:
         s = ctk.CTkFrame(
             contenedor, fg_color="white", corner_radius=12,
             border_width=1, border_color="#D6DCE8",
         )
-        s.pack(fill="x", pady=(0, 8))
+        s.pack(fill="x", pady=(0, 6))
+        cab = ctk.CTkFrame(s, fg_color="transparent")
+        cab.pack(fill="x", padx=16, pady=(10, 2))
         ctk.CTkLabel(
-            s, text=titulo, font=FUENTE_SECCION, text_color=AZUL_OSCURO
-        ).pack(anchor="w", padx=16, pady=(10, 2))
+            cab, text=titulo, font=FUENTE_SECCION, text_color=AZUL_OSCURO
+        ).pack(side="left")
+        if con_accion:
+            ctk.CTkButton(
+                cab, text="  ?  ", width=30, height=24, corner_radius=12,
+                font=FUENTE_BASE_NEG, fg_color=AZUL_CLARO,
+                hover_color="#C4D2EE", text_color=AZUL_OSCURO,
+                command=self._mostrar_ayuda_formato,
+            ).pack(side="right")
         return s
 
     def _campo_ruta(self, marco, fila, texto, variable, al_cambiar=None):
@@ -444,6 +453,7 @@ class App:
         entrada = ctk.CTkEntry(
             marco, textvariable=variable, font=FUENTE_BASE, height=34,
             corner_radius=8, border_color="#C9D2E3",
+            fg_color="white", text_color=GRIS_TXT,
         )
         entrada.grid(row=fila, column=1, sticky="ew", padx=(0, 10), pady=4)
         marco.columnconfigure(1, weight=1)
@@ -463,6 +473,7 @@ class App:
         entrada = ctk.CTkEntry(
             marco, textvariable=self.var_mapeo, font=FUENTE_BASE, height=34,
             corner_radius=8, border_color="#C9D2E3",
+            fg_color="white", text_color=GRIS_TXT,
         )
         entrada.grid(row=fila, column=1, sticky="ew", padx=(0, 10), pady=4)
         ctk.CTkButton(
@@ -587,7 +598,7 @@ class App:
         valido, mensaje = core.validar_patron(patron)
         codigo = self.var_codigo.get().strip()
         core.CODIGO_FIJO = codigo
-        original = "2026XX840820X1 INTERCONDI SA.pdf"
+        original = "2026XX840820X1 ACME CORPORACION.pdf"
         if valido:
             try:
                 final = core.generar_nombre(patron, "9900000001", 1)
@@ -650,13 +661,19 @@ class App:
                 continue
 
             tag = "ok" if listo else ("err" if anomalia else "pend")
+            detalle_mostrar = item["detalle"] or ""
+            if not listo and detalle_mostrar:
+                detalle_mostrar = (
+                    f"{detalle_mostrar}  |  Accion: "
+                    f"{core.accion_corta(item['detalle'])}"
+                )
             self.tabla.insert(
                 "", "end",
                 values=(
                     item["archivo"],
                     item["destino"] or "",
                     self._estado_item(item),
-                    item["detalle"] or "",
+                    detalle_mostrar,
                 ),
                 tags=(tag,),
             )
