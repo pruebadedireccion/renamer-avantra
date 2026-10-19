@@ -30,7 +30,8 @@ import errores as err
 import renamer_core as core
 
 try:  # drag and drop opcional
-    from tkinterdnd2 import DND_FILES, TkinterDnD
+    from tkinterdnd2 import DND_FILES
+    from tkinterdnd2.TkinterDnD import _require as _cargar_tkdnd
     TIENE_DND = True
 except Exception:  # pragma: no cover - entorno sin tkinterdnd2
     TIENE_DND = False
@@ -89,7 +90,11 @@ class App:
         self.root.title(TITULO)
         self.root.geometry(tamano_inicial())
         self.root.minsize(800, 580)
-        self.root.configure(fg_color=FONDO)
+        try:
+            self.root.configure(fg_color=FONDO)
+        except Exception:
+            # Root tkinter plano (sin customtkinter): usar bg clasico
+            self.root.configure(bg=FONDO)
 
         self.var_origen = ctk.StringVar()
         self.var_destino = ctk.StringVar()
@@ -1107,13 +1112,20 @@ class App:
 
 
 def main() -> None:
+    global TIENE_DND
     habilitar_dpi_awareness()
     ctk.set_appearance_mode("light")
     ctk.set_default_color_theme("blue")
+
+    # La raiz siempre es customtkinter (soporta fg_color y temas).
+    # El soporte de arrastrar y soltar se carga sobre esa misma raiz.
+    root = ctk.CTk()
     if TIENE_DND:
-        root = TkinterDnD.Tk()
-    else:  # pragma: no cover
-        root = ctk.CTk()
+        try:
+            _cargar_tkdnd(root)
+        except Exception:
+            TIENE_DND = False
+
     App(root)
     root.mainloop()
 
