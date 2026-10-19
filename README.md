@@ -2,6 +2,7 @@
 
 **Renombrado masivo de documentos PDF con formato de salida configurable**
 
+[![CI](https://github.com/pruebadedireccion/renamer-avantra/actions/workflows/ci.yml/badge.svg)](https://github.com/pruebadedireccion/renamer-avantra/actions/workflows/ci.yml)
 
 ---
 
@@ -26,8 +27,22 @@ parametrizable y ve el resultado en vivo antes de procesar nada.
 - **Ejemplo en vivo**: la ventana muestra la transformación
   `original -> final` mientras se edita el patrón
 - **Doble validación**: simulación completa antes de ejecutar (dry-run)
-  y bloqueo automático ante duplicados, colisiones de nombre o
-  correspondencias faltantes
+  y bloqueo automático ante colisiones de nombre
+- **Ejecución parcial con seguimiento**: si algunos archivos tienen
+  problemas, los válidos se renombran y los demás quedan en
+  `pendientes_correccion.csv` con la acción sugerida para corregirlos;
+  al re-ejecutar, los ya renombrados se omiten automáticamente
+- **Detección de mapeos conflictivos**: si el Excel asigna dos destinos
+  distintos al mismo identificador de origen, esos archivos quedan
+  pendientes en lugar de ir a la operación equivocada
+- **Validación de PDFs**: detecta archivos dañados o descargas
+  incompletas antes de copiarlos
+- **Tabla de resultados con filtros** (todo / listos / pendientes /
+  anomalías) y buscador, además del registro detallado
+- **Cancelación** de procesos largos y **deshacer** de la última
+  ejecución (solo copias registradas en el reporte)
+- **Errores explicados**: bloqueos de Excel/OneDrive, plantillas vacías
+  o archivos inválidos se informan con instrucciones y reintentos
 - **Trazabilidad total**: cada ejecución genera un `reporte.csv` con la
   relación archivo original -> archivo final y su estado
 - **Operación no destructiva**: los archivos originales nunca se

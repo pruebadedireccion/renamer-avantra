@@ -119,22 +119,35 @@ def main() -> None:
         )
         sys.exit(0)
 
-    mapeo = core.cargar_mapeo(Path(args.mapeo).resolve())
-    if not mapeo:
+    mapeo, conflictos = core.cargar_mapeo_detallado(Path(args.mapeo).resolve())
+    if not mapeo and not conflictos:
         print("ERROR: el Excel de mapeo no produjo pares origen -> destino.")
         sys.exit(1)
 
-    faltantes = set(core.ids_origen_unicos(registros)) - set(mapeo)
+    faltantes = {
+        i for i in core.ids_origen_unicos(registros)
+        if i not in mapeo and i not in conflictos
+    }
+    validos = len(core.ids_origen_unicos(registros)) - len(faltantes)
     print()
-    print(f"Mapeo cargado: {len(mapeo)} pares | sin correspondencia: {len(faltantes)}")
+    print(
+        f"Mapeo cargado: {len(mapeo)} pares | conflictos: {len(conflictos)} | "
+        f"sin correspondencia: {len(faltantes)}"
+    )
+    if conflictos:
+        print("MAPEOS CONFLICTIVOS (varios destinos para el mismo origen):")
+        for origen_id, destinos in sorted(conflictos.items()):
+            print(f"  [CONFLICTO] {origen_id} -> {', '.join(destinos)}")
     if faltantes:
-        print("PROCESO DETENIDO: ids sin correspondencia en el Excel.")
+        print("IDS SIN CORRESPONDENCIA:")
         for rad in sorted(faltantes):
             print(f"  [SIN MAPEO] {rad}")
+    if not validos:
+        print("PROCESO DETENIDO: no hay archivos con correspondencia valida.")
         sys.exit(2)
 
     # FASE 4: plan + validacion
-    plan = core.construir_plan(registros, mapeo, args.patron)
+    plan = core.construir_plan(registros, mapeo, args.patron, conflictos)
     res = core.resumen_plan(plan)
 
     print()
@@ -148,7 +161,7 @@ def main() -> None:
     print()
     print(
         f"A renombrar: {res['ok']} | sin mapeo: {res['sin_mapeo']} | "
-        f"anomalias: {res['anomalias']}"
+        f"conflictos: {res['conflictos']} | anomalias: {res['anomalias']}"
     )
 
     permitido, problemas = core.validar_plan(plan, destino_dir)
@@ -173,9 +186,16 @@ def main() -> None:
     print("EJECUTANDO...")
     copiados, omitidos = core.ejecutar_copias(plan, carpeta, destino_dir)
     core.escribir_reporte(plan, destino_dir / "reporte.csv")
+    n_pend, n_ids = core.escribir_pendientes(
+        plan, destino_dir / "pendientes_correccion.csv",
+        destino_dir / "ids_pendientes.txt",
+    )
     core.generar_lista_ids(registros, destino_dir / "ids_para_consulta.txt")
     print()
     print(f"LISTO: {copiados} archivo(s) copiados, {omitidos} omitidos.")
+    if n_pend:
+        print(f"Pendientes registrados: {n_pend} (ids para re-consulta: {n_ids})")
+        print(f"Registro: {destino_dir / 'pendientes_correccion.csv'}")
     print(f"Carpeta destino: {destino_dir}")
     print(f"Reporte: {destino_dir / 'reporte.csv'}")
 

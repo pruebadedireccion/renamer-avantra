@@ -52,6 +52,11 @@ TOKENS = ("{id}", "{n}", "{c}")
 OK = "OK"
 SIN_MAPEO = "SIN MAPEO"
 ANOMALIA = "ANOMALIA"
+CONFLICTO = "CONFLICTO"
+
+
+class ProcesoCancelado(Exception):
+    """Cancelacion solicitada por el usuario durante un proceso largo."""
 
 
 # --- Validacion del patron -----------------------------------------------------
@@ -139,9 +144,15 @@ def guardar_config(ruta: Path, datos: dict) -> None:
 # --- Inventario ---------------------------------------------------------------
 
 
-def inventariar(carpeta: Path, progreso=None) -> list[dict]:
+def inventariar(carpeta: Path, progreso=None, cancelado=None) -> list[dict]:
     """
     Escanea la carpeta plana y clasifica cada archivo.
+
+    Verifica la extension y el encabezado %PDF del contenido (detecta
+    descargas incompletas o archivos danados).
+
+    `cancelado`: callable opcional que devuelve True para abortar.
+    Lanza ProcesoCancelado si se solicita la cancelacion.
 
     Devuelve registros: {archivo, id_origen, anomalia}
     """
@@ -156,6 +167,10 @@ def inventariar(carpeta: Path, progreso=None) -> list[dict]:
 
     total = len(archivos)
     for i, nombre in enumerate(archivos, 1):
+        if cancelado and cancelado():
+            raise ProcesoCancelado(
+                f"Cancelado durante el inventario ({i - 1} de {total} leidos)"
+            )
         if progreso and i % 50 == 0:
             progreso(i, total)
 
@@ -168,6 +183,11 @@ def inventariar(carpeta: Path, progreso=None) -> list[dict]:
 
         if es_duplicado_descarga(nombre):
             reg["anomalia"] = "Duplicado de descarga ' (N)'"
+            registros.append(reg)
+            continue
+
+        if not _pdf_valido(carpeta / nombre):
+            reg["anomalia"] = "PDF danado o descarga incompleta"
             registros.append(reg)
             continue
 
@@ -186,6 +206,16 @@ def inventariar(carpeta: Path, progreso=None) -> list[dict]:
     return registros
 
 
+def _pdf_valido(ruta: Path) -> bool:
+    """True si el archivo abre y su encabezado es %PDF-."""
+    try:
+        with open(ruta, "rb") as f:
+            cabecera = f.read(5)
+        return cabecera == b"%PDF-"
+    except OSError:
+        return False
+
+
 def listar_anomalias(registros: list[dict]) -> list[dict]:
     return [r for r in registros if r["anomalia"] is not None]
 
@@ -202,6 +232,7 @@ def generar_lista_ids(registros: list[dict], ruta: Path) -> int:
     lineas = [
         ", ".join(ids[i : i + LOTE_CONSULTA]) for i in range(0, len(ids), LOTE_CONSULTA)
     ]
+    ruta.parent.mkdir(parents=True, exist_ok=True)
     ruta.write_text("\n".join(lineas), encoding="utf-8")
     return len(ids)
 
@@ -211,17 +242,36 @@ def generar_lista_ids(registros: list[dict], ruta: Path) -> int:
 
 def cargar_mapeo(ruta_excel: Path) -> dict[str, str]:
     """
+    Lee el Excel de correspondencia y auto-detecta columnas.
+    Compatibilidad: devuelve solo {id_origen: id_destino}.
+    Para detectar conflictos use cargar_mapeo_detallado().
+    """
+    mapeo, _conflictos = cargar_mapeo_detallado(ruta_excel)
+    return mapeo
+
+
+def cargar_mapeo_detallado(
+    ruta_excel: Path,
+) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """
     Lee el Excel de correspondencia y auto-detecta columnas:
         - origen: celda que calza con el patron de id de origen
         - destino: celda numerica de 6-12 digitos
-    Devuelve {id_origen: id_destino}.
+
+    Detecta mapeos conflictivos: un mismo id de origen con dos o mas
+    destinos distintos. Esos origenes se excluyen del mapeo y se
+    devuelven aparte en `conflictos`.
+
+    Devuelve (mapeo, conflictos):
+        mapeo      : {id_origen: id_destino}
+        conflictos : {id_origen: [destinos distintos detectados]}
     """
     wb = openpyxl.load_workbook(ruta_excel, read_only=True, data_only=True)
     try:
         ws = wb.active
         if ws is None:
             raise ValueError("El Excel no tiene hoja activa")
-        mapeo: dict[str, str] = {}
+        vistos: dict[str, set[str]] = {}
         for fila in ws.iter_rows(values_only=True):
             if not fila:
                 continue
@@ -235,8 +285,16 @@ def cargar_mapeo(ruta_excel: Path) -> dict[str, str]:
                 elif destino is None and RE_ID_DESTINO.fullmatch(texto):
                     destino = texto
             if origen and destino:
-                mapeo[origen] = destino
-        return mapeo
+                vistos.setdefault(origen, set()).add(destino)
+
+        mapeo: dict[str, str] = {}
+        conflictos: dict[str, list[str]] = {}
+        for origen, destinos in vistos.items():
+            if len(destinos) == 1:
+                mapeo[origen] = next(iter(destinos))
+            else:
+                conflictos[origen] = sorted(destinos)
+        return mapeo, conflictos
     finally:
         wb.close()
 
@@ -248,17 +306,20 @@ def construir_plan(
     registros: list[dict],
     mapeo: dict[str, str] | None,
     patron: str = PATRON_DEFAULT,
+    conflictos: dict[str, list[str]] | None = None,
 ) -> list[dict]:
     """
     Construye el plan por archivo con el patron de salida dado:
         OK         -> tiene id de origen y mapeo
         SIN MAPEO  -> id valido pero sin correspondencia en el Excel
+        CONFLICTO  -> el Excel asigna dos o mas destinos al mismo origen
         ANOMALIA   -> problema de estructura (no se renombra)
 
     Numeracion: si una misma operacion de destino recibe varios archivos,
     {n} toma 1, 2, 3... (orden alfabetico). Si la operacion tiene un solo
     archivo, {n} vale 1 (o no aparece si el patron no lo usa).
     """
+    conflictos = conflictos or {}
     plan = []
     for r in registros:
         item = {
@@ -277,6 +338,16 @@ def construir_plan(
         if mapeo is None:
             item["estado"] = OK
             item["detalle"] = "sin mapeo (pendiente Excel de correspondencia)"
+            plan.append(item)
+            continue
+
+        if r["id_origen"] in conflictos:
+            destinos = ", ".join(conflictos[r["id_origen"]])
+            item["estado"] = CONFLICTO
+            item["detalle"] = (
+                f"conflicto: el Excel asigna varios destinos a este origen "
+                f"({destinos})"
+            )
             plan.append(item)
             continue
 
@@ -324,6 +395,7 @@ def resumen_plan(plan: list[dict]) -> dict:
         "ok": sum(1 for p in plan if p["estado"] == OK and p["destino"]),
         "sin_mapeo": sum(1 for p in plan if p["estado"] == SIN_MAPEO),
         "anomalias": sum(1 for p in plan if p["estado"] == ANOMALIA),
+        "conflictos": sum(1 for p in plan if p["estado"] == CONFLICTO),
         "pendientes_mapeo": sum(
             1 for p in plan if p["estado"] == OK and not p["destino"]
         ),
@@ -362,6 +434,12 @@ def validar_plan(
             f"AVISO: {len(sin_mapeo)} archivo(s) sin correspondencia quedaran "
             "pendientes (se registran en pendientes_correccion.csv)"
         )
+    conflictos = [p for p in plan if p["estado"] == CONFLICTO]
+    if conflictos:
+        problemas.append(
+            f"AVISO: {len(conflictos)} archivo(s) con mapeo conflictivo "
+            "quedaran pendientes (el Excel asigna varios destinos al mismo origen)"
+        )
     ya_existen = [p for p in ok if (destino_dir / p["destino"]).exists()]
     if ya_existen:
         problemas.append(
@@ -380,6 +458,18 @@ def accion_sugerida(detalle: str) -> str:
             "Obtenga el identificador de destino de este radicado en el "
             "sistema, agreguelo al Excel de correspondencia y vuelva a "
             "ejecutar (los ya renombrados se omiten solos)."
+        )
+    if "conflicto" in d:
+        return (
+            "El Excel asigna dos o mas destinos al mismo radicado. "
+            "Verifique cual operacion es la correcta, deje una sola fila "
+            "para ese radicado en el Excel y vuelva a ejecutar."
+        )
+    if "danado" in d or "incompleta" in d:
+        return (
+            "El archivo no tiene un PDF valido (descarga incompleta o "
+            "archivo corrupto). Vuelva a descargarlo, reemplacelo en la "
+            "carpeta origen y ejecute de nuevo."
         )
     if "duplicado" in d:
         return (
@@ -412,10 +502,11 @@ def escribir_pendientes(
     pendientes = [
         p
         for p in plan
-        if p["estado"] in (SIN_MAPEO, ANOMALIA)
+        if p["estado"] in (SIN_MAPEO, ANOMALIA, CONFLICTO)
         or (p["estado"] == OK and not p["destino"])
     ]
 
+    ruta_pendientes.parent.mkdir(parents=True, exist_ok=True)
     with open(ruta_pendientes, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f, delimiter=";")
         w.writerow(["archivo_original", "id_origen", "motivo", "accion_sugerida"])
@@ -430,12 +521,12 @@ def escribir_pendientes(
                 ]
             )
 
-    # Lista de ids sin correspondencia para re-consulta
+    # Lista de ids sin correspondencia (o con conflicto) para re-consulta
     ids_sin = sorted(
         {
             p["id_origen"]
             for p in pendientes
-            if p["estado"] == SIN_MAPEO and p["id_origen"]
+            if p["estado"] in (SIN_MAPEO, CONFLICTO) and p["id_origen"]
         }
     )
     if ids_pendientes_ruta is not None:
@@ -449,11 +540,16 @@ def escribir_pendientes(
 
 
 def ejecutar_copias(
-    plan: list[dict], carpeta: Path, destino_dir: Path, progreso=None
+    plan: list[dict], carpeta: Path, destino_dir: Path, progreso=None,
+    cancelado=None,
 ) -> tuple[int, int]:
     """
     Copia los archivos con estado OK+destino a destino_dir.
     Devuelve (copiados, omitidos).
+
+    `cancelado`: callable opcional que devuelve True para abortar.
+    Lanza ProcesoCancelado si se solicita la cancelacion (lo ya copiado
+    se conserva y queda registrado en el reporte).
     """
     destino_dir.mkdir(parents=True, exist_ok=True)
     pendientes = [p for p in plan if p["estado"] == OK and p["destino"]]
@@ -461,6 +557,10 @@ def ejecutar_copias(
     copiados = omitidos = 0
 
     for i, p in enumerate(pendientes, 1):
+        if cancelado and cancelado():
+            raise ProcesoCancelado(
+                f"Cancelado durante la copia ({copiados} copiados de {total})"
+            )
         origen = carpeta / p["archivo"]
         destino = destino_dir / p["destino"]
         if destino.exists():
@@ -472,6 +572,46 @@ def ejecutar_copias(
             progreso(i, total)
 
     return copiados, omitidos
+
+
+def deshacer_desde_reporte(
+    ruta_reporte: Path, carpeta_origen: Path, destino_dir: Path
+) -> tuple[int, list[str]]:
+    """
+    Deshace la ultima ejecucion: elimina SOLO las copias registradas en el
+    reporte que cumplan todas estas condiciones:
+        1. El archivo destino existe.
+        2. Corresponde a una fila con estado OK del reporte.
+        3. Si el original existe, el tamano coincide con la copia.
+
+    Devuelve (eliminados, errores).
+    """
+    if not ruta_reporte.is_file():
+        return 0, ["No existe reporte.csv en la carpeta destino."]
+
+    eliminados = 0
+    errores: list[str] = []
+    with open(ruta_reporte, encoding="utf-8-sig") as f:
+        for fila in csv.DictReader(f, delimiter=";"):
+            if fila.get("estado") != OK or not fila.get("archivo_nuevo"):
+                continue
+            destino = destino_dir / fila["archivo_nuevo"]
+            origen = carpeta_origen / fila["archivo_original"]
+            if not destino.is_file():
+                continue
+            try:
+                if origen.is_file() and destino.stat().st_size != origen.stat().st_size:
+                    errores.append(
+                        f"NO se borro (tamano distinto al original): "
+                        f"{fila['archivo_nuevo']}"
+                    )
+                    continue
+                destino.unlink()
+                eliminados += 1
+            except OSError as exc:
+                errores.append(f"No se pudo borrar {fila['archivo_nuevo']}: {exc}")
+
+    return eliminados, errores
 
 
 def escribir_reporte(plan: list[dict], ruta_reporte: Path) -> None:
