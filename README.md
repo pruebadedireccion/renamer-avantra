@@ -87,22 +87,52 @@ patrón produce un único nombre. Si recibe varios, se numeran 1, 2, 3...
 
 ## Entrada esperada
 
+### Nombres de archivo: cualquier estructura
+
+La detección del identificador de origen es por capas (modo universal,
+ajustable en Opciones avanzadas):
+
 ```
 carpeta_origen/
-├── 2026XX840820X1 ACME CORPORACION.pdf
-├── 2026XX840823X1 BETA SERVICIOS.pdf
-└── ...
+├── 2026XX840820X1 ACME CORPORACION.pdf   (capa 1: radicado)
+├── INV-2026-0001 factura.pdf             (capa 2: prefijo antes del espacio)
+├── documento_contrato_final.pdf          (capa 3: nombre completo)
+└── 12345678.pdf
 ```
 
-Los nombres deben iniciar con el identificador de origen (por defecto:
-4 dígitos + 2 letras + números + 1 letra + 1 dígito). El Excel de
-correspondencia contiene dos columnas; la aplicación detecta cuál es cuál
-por su contenido, sin importar el orden ni el título:
+Si un archivo no encuentra correspondencia en el Excel, queda registrado
+en `pendientes_correccion.csv` con su acción sugerida (nunca se descarta
+un lote completo por un archivo suelto).
+
+### Excel de correspondencia: estructura reglada
+
+Dos columnas **contiguas**: ORIGEN a la izquierda y DESTINO inmediatamente
+a su derecha (los encabezados son libres; las columnas extra se ignoran):
 
 | ID de origen | ID de destino |
 |---|---|
 | 2026XX840820X1 | 9900000001 |
-| 2026XX840823X1 | 9900000002 |
+| INV-2026-0001 | EXP-2026-001 |
+
+Detección:
+
+- **Capa 1 (clásica):** origen con patrón radicado + destino numérico de
+  6–12 dígitos en la misma fila, en cualquier orden de columnas (compati-
+  ble con exportes de 3 columnas).
+- **Capa 2 (regla general):** destino = celda inmediatamente a la derecha
+  del origen (para claves y destinos alfanuméricos como `EXP-2026-001`).
+- El botón **Verificar Excel** da un dictamen instantáneo: filas leídas,
+  pares válidos, conflictos y filas saltadas con su motivo.
+- El botón **Crear plantilla** genera un Excel de ejemplo con la estructura
+  correcta y sus instrucciones.
+
+### Modos de detección (Opciones avanzadas)
+
+| Modo | Origen | Destino |
+|---|---|---|
+| Universal (por defecto) | radicado → prefijo → nombre completo | numérico o celda derecha |
+| Radicado estricto | solo el patrón de radicado | numérico |
+| Personalizado | regex propia | regex propia |
 
 ## Flujo de uso
 

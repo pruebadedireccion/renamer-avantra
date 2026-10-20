@@ -52,6 +52,23 @@ def main() -> None:
         "--codigo", default="", help="Codigo fijo para el token {c} (ej. ZREE)"
     )
     ap.add_argument(
+        "--modo",
+        default=core.MODO_AUTO,
+        choices=[core.MODO_AUTO, core.MODO_RADICADO, core.MODO_CUSTOM],
+        help="Deteccion de identificadores: auto (radicado/prefijo/nombre "
+        "libre), radicado (estricto) o custom (regex propias)",
+    )
+    ap.add_argument(
+        "--regex-origen",
+        default="",
+        help="Regex del id de origen (solo --modo custom), ej. EXP-\\d{4}-\\d{3}",
+    )
+    ap.add_argument(
+        "--regex-destino",
+        default="",
+        help="Regex del id de destino en el Excel (solo --modo custom)",
+    )
+    ap.add_argument(
         "--ejecutar",
         action="store_true",
         help="Ejecuta de verdad (copia). Sin esta bandera solo simula.",
@@ -65,6 +82,16 @@ def main() -> None:
         sys.exit(1)
     core.CODIGO_FIJO = args.codigo
 
+    regex_or = regex_de = None
+    try:
+        if args.modo == core.MODO_CUSTOM:
+            regex_or = core._compilar_regex(args.regex_origen, "origen")
+            if args.regex_destino:
+                regex_de = core._compilar_regex(args.regex_destino, "destino")
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        sys.exit(1)
+
     carpeta = Path(args.carpeta).resolve()
     if not carpeta.is_dir():
         print(f"ERROR: la carpeta no existe: {carpeta}")
@@ -75,7 +102,13 @@ def main() -> None:
     )
 
     # FASE 1: inventario
-    registros = core.inventariar(carpeta)
+    try:
+        registros = core.inventariar(
+            carpeta, modo=args.modo, regex_origen=regex_or
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        sys.exit(1)
     anom = core.listar_anomalias(registros)
     n_ids = len(core.ids_origen_unicos(registros))
 
@@ -86,6 +119,7 @@ def main() -> None:
     print(f"Validos          : {len(registros) - len(anom)}")
     print(f"Anomalias        : {len(anom)}")
     print(f"Ids de origen    : {n_ids}")
+    print(f"Modo de deteccion: {args.modo}")
     print(f"Patron de salida : {args.patron}")
     if args.codigo:
         print(f"Codigo fijo      : {args.codigo}")
@@ -119,9 +153,13 @@ def main() -> None:
         )
         sys.exit(0)
 
-    mapeo, conflictos = core.cargar_mapeo_detallado(Path(args.mapeo).resolve())
+    mapeo, conflictos, informe = core.cargar_mapeo_detallado(
+        Path(args.mapeo).resolve(), args.modo, regex_or, regex_de
+    )
     if not mapeo and not conflictos:
         print("ERROR: el Excel de mapeo no produjo pares origen -> destino.")
+        print("Verifique la estructura del Excel (origen y destino en")
+        print("columnas contiguas) o el modo de deteccion.")
         sys.exit(1)
 
     faltantes = {

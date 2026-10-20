@@ -24,6 +24,7 @@ from __future__ import annotations
 import csv
 import json
 import re
+import zipfile
 from pathlib import Path
 
 try:
@@ -43,9 +44,18 @@ PATRON_DEFAULT = "{id}-{c}-{n}"
 CODIGO_FIJO = ""  # codigo fijo configurable (ej. ZREE)
 LOTE_CONSULTA = 200
 
-ARCHIVOS_PROPIOS = {"ids_para_consulta.txt", "reporte.csv", "config.json"}
+ARCHIVOS_PROPIOS = {
+    "ids_para_consulta.txt", "reporte.csv", "config.json",
+    "pendientes_correccion.csv", "ids_pendientes.txt",
+    "plantilla_correspondencia.xlsx",
+}
 
 TOKENS = ("{id}", "{n}", "{c}")
+
+# Modos de detección de los identificadores
+MODO_AUTO = "auto"        # universal: radicado -> prefijo -> nombre completo
+MODO_RADICADO = "radicado"  # estricto: solo el patron de radicado
+MODO_CUSTOM = "custom"    # regex propias definidas por el usuario
 
 # --- Estados ----------------------------------------------------------------
 
@@ -111,8 +121,57 @@ def es_pdf(nombre: str) -> bool:
 
 
 def extraer_id_origen(nombre: str) -> str | None:
+    """Extrae el id de origen con el patron de radicado (estricto)."""
     m = RE_ID_ORIGEN.match(nombre)
     return m.group("id").upper() if m else None
+
+
+def _sanear_id(valor: str) -> str | None:
+    """Normaliza un id detectado: quita espacios/sobrantes y limita longitud."""
+    valor = valor.strip().strip(".,;:").strip()
+    valor = re.sub(r"\s+", " ", valor)
+    if not valor or len(valor) > 64:
+        return None
+    return valor
+
+
+def extraer_id_origen_flexible(
+    nombre: str, modo: str = MODO_AUTO, regex_origen: re.Pattern | None = None
+) -> str | None:
+    """
+    Deteccion del id de origen por capas (modo universal):
+
+        1. Patron de radicado (2026EE...O1), igual que siempre.
+        2. Prefijo: texto antes del primer espacio
+           (ej. 'INV-2026-0001 factura.pdf' -> 'INV-2026-0001').
+        3. Nombre completo sin extension cuando no hay espacios
+           (ej. '12345678.pdf' -> '12345678').
+
+    Modo 'radicado': solo la capa 1.
+    Modo 'custom': aplica regex_origen contra el prefijo y, si no calza,
+    contra el nombre completo.
+    """
+    stem = Path(nombre).stem
+
+    if modo == MODO_CUSTOM and regex_origen is not None:
+        prefijo = stem.split(" ", 1)[0]
+        for candidato in (prefijo, stem):
+            if regex_origen.fullmatch(candidato):
+                return candidato.upper()
+        return None
+
+    if modo == MODO_RADICADO:
+        return extraer_id_origen(nombre)
+
+    if modo == MODO_AUTO:
+        estricto = extraer_id_origen(nombre)
+        if estricto:
+            return estricto
+
+    if " " in stem:
+        return _sanear_id(stem.split(" ", 1)[0])
+
+    return _sanear_id(stem)
 
 
 def es_duplicado_descarga(nombre: str) -> bool:
@@ -144,18 +203,35 @@ def guardar_config(ruta: Path, datos: dict) -> None:
 # --- Inventario ---------------------------------------------------------------
 
 
-def inventariar(carpeta: Path, progreso=None, cancelado=None) -> list[dict]:
+def inventariar(
+    carpeta: Path,
+    progreso=None,
+    cancelado=None,
+    modo: str = MODO_AUTO,
+    regex_origen=None,
+) -> list[dict]:
     """
     Escanea la carpeta plana y clasifica cada archivo.
 
     Verifica la extension y el encabezado %PDF del contenido (detecta
     descargas incompletas o archivos danados).
 
+    Modo de deteccion del id de origen:
+        - auto     : radicado -> prefijo antes del primer espacio ->
+                     nombre completo
+        - radicado : solo el patron de radicado
+        - custom   : regex propia (regex_origen)
+
     `cancelado`: callable opcional que devuelve True para abortar.
     Lanza ProcesoCancelado si se solicita la cancelacion.
 
     Devuelve registros: {archivo, id_origen, anomalia}
     """
+    if modo == MODO_CUSTOM:
+        if regex_origen is None:
+            raise ValueError("Modo personalizado sin regex de origen")
+        regex_origen = _compilar_regex(regex_origen, "origen")
+
     registros: list[dict] = []
     archivos = sorted(
         p.name
@@ -191,9 +267,13 @@ def inventariar(carpeta: Path, progreso=None, cancelado=None) -> list[dict]:
             registros.append(reg)
             continue
 
-        id_origen = extraer_id_origen(nombre)
+        id_origen = extraer_id_origen_flexible(nombre, modo, regex_origen)
         if not id_origen:
-            reg["anomalia"] = "No inicia con el patron de identificador"
+            reg["anomalia"] = (
+                "No se pudo determinar el id de origen del nombre"
+                if modo == MODO_CUSTOM
+                else "No inicia con el patron de identificador"
+            )
             registros.append(reg)
             continue
         reg["id_origen"] = id_origen
@@ -243,49 +323,118 @@ def generar_lista_ids(registros: list[dict], ruta: Path) -> int:
 def cargar_mapeo(ruta_excel: Path) -> dict[str, str]:
     """
     Lee el Excel de correspondencia y auto-detecta columnas.
-    Compatibilidad: devuelve solo {id_origen: id_destino}.
-    Para detectar conflictos use cargar_mapeo_detallado().
+    Compatibilidad: devuelve solo {id_origen: id_destino} en modo auto.
+    Para conflictos e informe use cargar_mapeo_detallado().
     """
-    mapeo, _conflictos = cargar_mapeo_detallado(ruta_excel)
+    mapeo, _conflictos, _informe = cargar_mapeo_detallado(ruta_excel)
     return mapeo
 
 
 def cargar_mapeo_detallado(
     ruta_excel: Path,
-) -> tuple[dict[str, str], dict[str, list[str]]]:
+    modo: str = MODO_AUTO,
+    regex_origen=None,
+    regex_destino=None,
+) -> tuple[dict[str, str], dict[str, list[str]], dict]:
     """
-    Lee el Excel de correspondencia y auto-detecta columnas:
-        - origen: celda que calza con el patron de id de origen
-        - destino: celda numerica de 6-12 digitos
+    Lee el Excel de correspondencia y detecta los pares (origen, destino).
 
-    Detecta mapeos conflictivos: un mismo id de origen con dos o mas
-    destinos distintos. Esos origenes se excluyen del mapeo y se
-    devuelven aparte en `conflictos`.
+    Estructura reglada del Excel:
+        - Capa 1 (auto clasica): una celda calza con el patron de radicado
+          y hay un destino numerico de 6-12 digitos en la misma fila, en
+          cualquier columna (tolera exportes con columnas extra).
+        - Capa 2 (regla general del modo universal): donde una celda (o su
+          prefijo, si trae texto despues) es el origen y el DESTINO es la
+          celda inmediatamente a su derecha. Para excluir encabezados, el
+          origen debe tener al menos 4 caracteres y el par debe contener
+          al menos un digito.
 
-    Devuelve (mapeo, conflictos):
-        mapeo      : {id_origen: id_destino}
-        conflictos : {id_origen: [destinos distintos detectados]}
+    Modo 'radicado': solo capa 1. Modo 'custom': regex_origen/regex_destino
+    como coincidencia exacta de celda (destino a la derecha del origen).
+
+    Detecta mapeos conflictivos: un mismo origen con dos o mas destinos
+    distintos se excluye del mapeo y se devuelve aparte en `conflictos`.
+
+    Devuelve (mapeo, conflictos, informe):
+        mapeo      : {origen: destino}
+        conflictos : {origen: [destinos distintos]}
+        informe    : {"filas", "pares", "conflictos", "saltadas"} con
+                     saltadas = [(fila, motivo)]
     """
+    if modo == MODO_CUSTOM:
+        regex_origen = _compilar_regex(regex_origen, "origen")
+        if regex_destino is not None:
+            regex_destino = _compilar_regex(regex_destino, "destino")
+
     wb = openpyxl.load_workbook(ruta_excel, read_only=True, data_only=True)
     try:
         ws = wb.active
         if ws is None:
             raise ValueError("El Excel no tiene hoja activa")
         vistos: dict[str, set[str]] = {}
+        saltadas: list[tuple[int, str]] = []
+        n_filas = 0
+        fila_num = 0
+
         for fila in ws.iter_rows(values_only=True):
-            if not fila:
+            fila_num += 1
+            if not fila or not any(c is not None for c in fila):
                 continue
+
             origen = destino = None
-            for celda in fila:
+            if modo == MODO_CUSTOM:
+                origen, destino = _par_custom(fila, regex_origen, regex_destino)
+                n_filas += 1
+                if origen and destino:
+                    vistos.setdefault(origen, set()).add(destino)
+                elif origen or destino:
+                    saltadas.append((fila_num, "fila incompleta"))
+                continue
+            else:
+                # Capa 1: radicado + destino numerico (columnas en cualquier orden)
+                for celda in fila:
+                    if celda is None:
+                        continue
+                    texto = str(celda).strip()
+                    if origen is None and RE_ID_ORIGEN.fullmatch(texto):
+                        origen = texto.upper()
+                    elif destino is None and RE_ID_DESTINO.fullmatch(texto):
+                        destino = texto
+                n_filas += 1
+                if not (origen and destino) and modo != MODO_AUTO:
+                    # modo radicado no aplica la capa general
+                    if origen or destino:
+                        saltadas.append((fila_num, "fila incompleta"))
+
+            if origen and destino:
+                vistos.setdefault(origen, set()).add(destino)
+                continue
+
+            if modo != MODO_AUTO:
+                continue
+
+            # Capa 2 (regla general): origen por prefijo/celda y destino
+            # inmediatamente a la derecha.
+            origen2 = destino2 = None
+            for idx, celda in enumerate(fila):
                 if celda is None:
                     continue
                 texto = str(celda).strip()
-                if origen is None and RE_ID_ORIGEN.fullmatch(texto):
-                    origen = texto.upper()
-                elif destino is None and RE_ID_DESTINO.fullmatch(texto):
-                    destino = texto
-            if origen and destino:
-                vistos.setdefault(origen, set()).add(destino)
+                origen2 = _origen_de_celda(texto)
+                if not origen2 or len(origen2) < 4:
+                    continue
+                if idx + 1 < len(fila) and fila[idx + 1] is not None:
+                    destino2 = _sanear_destino(str(fila[idx + 1]))
+                break
+
+            if origen2 and destino2 and destino2 != origen2:
+                if not (any(ch.isdigit() for ch in origen2)
+                        or any(ch.isdigit() for ch in destino2)):
+                    saltadas.append((fila_num, "sin digitos: parece encabezado"))
+                    continue
+                vistos.setdefault(origen2, set()).add(destino2)
+            elif origen2:
+                saltadas.append((fila_num, "sin destino a la derecha del origen"))
 
         mapeo: dict[str, str] = {}
         conflictos: dict[str, list[str]] = {}
@@ -294,9 +443,69 @@ def cargar_mapeo_detallado(
                 mapeo[origen] = next(iter(destinos))
             else:
                 conflictos[origen] = sorted(destinos)
-        return mapeo, conflictos
+
+        informe = {
+            "filas": n_filas,
+            "pares": len(mapeo) + len(conflictos),
+            "conflictos": len(conflictos),
+            "saltadas": saltadas,
+        }
+        return mapeo, conflictos, informe
     finally:
         wb.close()
+
+
+def _origen_de_celda(texto: str) -> str | None:
+    """
+    Regla general para la celda del origen en el Excel:
+        - Si la celda trae texto despues de un espacio, se toma el prefijo
+          (misma regla que los nombres de archivo).
+        - Si no trae espacios, la celda completa es el origen.
+    """
+    return _sanear_id(texto.split(" ", 1)[0])
+
+
+def _sanear_destino(valor: str) -> str | None:
+    """Normaliza un valor de destino: sin espacios inutiles, max 64."""
+    destino = valor.strip().strip(".,;:").strip()
+    if not destino or len(destino) > 64:
+        return None
+    return destino
+
+
+def _compilar_regex(valor, nombre: str):
+    """
+    Acepta patron (texto) o regex ya compilada. Valida y devuelve una
+    regex compilada; lanza ValueError con mensaje accionable si es invalida.
+    """
+    if valor is None:
+        raise ValueError(f"Regex de {nombre} no definida")
+    if isinstance(valor, str):
+        try:
+            valor = re.compile(valor)
+        except re.error as exc:
+            raise ValueError(f"Regex de {nombre} invalida: {exc}") from exc
+    try:
+        valor.fullmatch("")
+    except re.error as exc:
+        raise ValueError(f"Regex de {nombre} invalida: {exc}") from exc
+    return valor
+
+
+def _par_custom(fila, regex_origen, regex_destino):
+    """Busca origen y destino con regex propias (destino a la derecha)."""
+    origen = destino = None
+    for idx, celda in enumerate(fila):
+        if celda is None:
+            continue
+        texto = str(celda).strip()
+        if origen is None and regex_origen.fullmatch(texto):
+            origen = texto.upper()
+            continue
+        if origen is not None and destino is None:
+            if regex_destino.fullmatch(texto):
+                destino = texto
+    return origen, destino
 
 
 # --- Plan de renombrado ---------------------------------------------------------
@@ -630,6 +839,78 @@ def deshacer_desde_reporte(
                 errores.append(f"No se pudo borrar {fila['archivo_nuevo']}: {exc}")
 
     return eliminados, errores
+
+
+def crear_plantilla_excel(ruta: Path) -> None:
+    """
+    Genera una plantilla de Excel de correspondencia con la estructura
+    reglada: columnas de origen y destino contiguas, filas de ejemplo
+    ficticias y una hoja de instrucciones.
+
+    La metadata del archivo se deja neutra (sin rastros de herramientas).
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Correspondencia"
+    ws.append(["ID origen", "ID destino"])
+    ws["A1"].font = openpyxl.styles.Font(bold=True)
+    ws["B1"].font = openpyxl.styles.Font(bold=True)
+    ws.column_dimensions["A"].width = 32
+    ws.column_dimensions["B"].width = 24
+    ws.append(["2026XX840820X1", "9900000001"])
+    ws.append(["2026EE963171O1", "1301140555"])
+    ws.append(["INV-2026-0001", "EXP-2026-001"])
+
+    instrucciones = wb.create_sheet("Instrucciones")
+    instrucciones.column_dimensions["A"].width = 110
+    texto = [
+        "ESTRUCTURA DEL EXCEL DE CORRESPONDENCIA",
+        "",
+        "1. Dos columnas contiguas: ORIGEN a la izquierda y DESTINO",
+        "   inmediatamente a su derecha.",
+        "2. Los encabezados pueden decir lo que sea (se ignoran).",
+        "3. ORIGEN: el identificador con el que inicia cada nombre de",
+        "   archivo (radicado, numero, codigo...).",
+        "4. DESTINO: el identificador al que debe renombrarse ese",
+        "   archivo.",
+        "5. Elimina las filas de ejemplo antes de usar la plantilla.",
+        "6. Columnas adicionales a la derecha del destino se ignoran.",
+        "",
+        "Con esa estructura, la deteccion es automatica: la aplicacion",
+        "detecta las columnas y cuenta los pares al seleccionar el",
+        "archivo. Usa el boton 'Verificar Excel' para comprobar el",
+        "contenido antes de simular.",
+    ]
+    for i, linea in enumerate(texto, 1):
+        instrucciones.cell(row=i, column=1, value=linea)
+    instrucciones.cell(row=1, column=1).font = openpyxl.styles.Font(
+        bold=True, size=12
+    )
+
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(ruta)
+
+    # Metadata neutra (sin rastros de herramientas)
+    tmp = ruta.with_suffix(".tmp.xlsx")
+    with zipfile.ZipFile(ruta) as zin, zipfile.ZipFile(
+        tmp, "w", zipfile.ZIP_DEFLATED
+    ) as zout:
+        for n in zin.namelist():
+            datos = zin.read(n)
+            if n == "docProps/app.xml":
+                datos = datos.replace(
+                    b"Microsoft Excel Compatible / Openpyxl 3.1.5",
+                    b"Microsoft Excel",
+                )
+                datos = re.sub(
+                    rb"<AppVersion>[^<]*</AppVersion>",
+                    b"<AppVersion>16.0000</AppVersion>",
+                    datos,
+                )
+            elif n == "docProps/core.xml":
+                datos = re.sub(b">openpyxl<", b">Daniel Mauricio Reina Diaz<", datos)
+            zout.writestr(n, datos)
+    tmp.replace(ruta)
 
 
 def escribir_reporte(plan: list[dict], ruta_reporte: Path) -> None:

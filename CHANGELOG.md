@@ -5,6 +5,27 @@ Todas las versiones notables de Renamer Avantra.
 El formato sigue las ideas de [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 y el proyecto usa [Versionado Semántico](https://semver.org/lang/es/).
 
+## [1.3.0] - 2026-10-20
+
+### Añadido
+- **Detección universal de identificadores**: el modo por defecto
+  reconoce cualquier estructura de nombre de archivo por capas
+  (radicado → prefijo antes del primer espacio → nombre completo),
+  en lugar de exigir el patrón de radicado.
+- **Estructura reglada del Excel de correspondencia**: origen y destino
+  en columnas contiguas, con detección automática de ambas capas
+  (clásica numérica y regla general alfanumérica como `EXP-2026-001`).
+- **Verificar Excel**: dictamen instantáneo de la estructura (filas,
+  pares, conflictos y filas saltadas con motivo).
+- **Crear plantilla**: genera un Excel de correspondencia de ejemplo
+  con instrucciones.
+- **Opciones avanzadas**: modos de detección (Universal / Radicado
+  estricto / Personalizado) con regex propias y prueba en vivo;
+  se persisten en `config.json`.
+- CLI: `--modo`, `--regex-origen` y `--regex-destino`.
+- Nuevas pruebas: nombres aleatorios, fuzz de 50 nombres y destino
+  alfanumérico.
+
 ## [1.2.2] - 2026-09-16
 
 ### Mejorado

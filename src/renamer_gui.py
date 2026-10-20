@@ -37,7 +37,7 @@ except Exception:  # pragma: no cover - entorno sin tkinterdnd2
     TIENE_DND = False
 
 TITULO = "Renamer Avantra - Renombrado Masivo de Documentos"
-VERSION = "1.2.2"
+VERSION = "1.3.0"
 
 # --- Paleta ------------------------------------------------------------------
 AZUL_OSCURO = "#1F3864"
@@ -117,6 +117,13 @@ class App:
         if cfg.get("mapeo") and Path(cfg["mapeo"]).is_file():
             self.var_mapeo.set(cfg["mapeo"])
 
+        # Deteccion de identificadores (v1.3.0)
+        self.modo = cfg.get("modo", core.MODO_AUTO)
+        if self.modo not in (core.MODO_AUTO, core.MODO_RADICADO, core.MODO_CUSTOM):
+            self.modo = core.MODO_AUTO
+        self.regex_origen_cfg = cfg.get("regex_origen", "")
+        self.regex_destino_cfg = cfg.get("regex_destino", "")
+
         self.plan: list[dict] = []
         self.registros: list[dict] = []
         self.mapeo: dict[str, str] | None = None
@@ -178,9 +185,26 @@ class App:
             anchor="w",
         )
         self.lbl_vista_carpeta.grid(
-            row=3, column=0, columnspan=3, sticky="w", padx=(0, 10),
+            row=3, column=0, columnspan=2, sticky="w", padx=(0, 10),
             pady=(0, 4),
         )
+        fila_av = ctk.CTkFrame(interno, fg_color="transparent")
+        fila_av.grid(row=3, column=2, sticky="e", pady=(0, 4))
+        ctk.CTkButton(
+            fila_av, text="Verificar Excel", command=self._verificar_excel,
+            fg_color=AZUL_CLARO, hover_color="#C4D2EE", text_color=AZUL_OSCURO,
+            font=FUENTE_ESTADO, corner_radius=8, height=28, width=120,
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            fila_av, text="Crear plantilla", command=self._crear_plantilla,
+            fg_color=AZUL_CLARO, hover_color="#C4D2EE", text_color=AZUL_OSCURO,
+            font=FUENTE_ESTADO, corner_radius=8, height=28, width=118,
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            fila_av, text="Avanzado", command=self._ventana_avanzada,
+            fg_color="white", hover_color=AZUL_CLARO, text_color=AZUL_OSCURO,
+            font=FUENTE_ESTADO, corner_radius=8, height=28, width=90,
+        ).pack(side="left")
         self.ent_destino = self._campo_ruta(
             interno, 1, "Carpeta destino (renombrados):", self.var_destino
         )
@@ -542,7 +566,9 @@ class App:
             self._estado("El Excel seleccionado no existe en esa ruta.")
             return
         mapeo, mensaje_error = err.leer_mapeo_con_reintentos(
-            Path(ruta), intentos=2, espera=1.0
+            Path(ruta), intentos=2, espera=1.0,
+            modo=self.modo, regex_origen=self.regex_origen_cfg or None,
+            regex_destino=self.regex_destino_cfg or None,
         )
         if mensaje_error:
             messagebox.showwarning(TITULO, mensaje_error)
@@ -582,9 +608,13 @@ class App:
             datos["patron"] = patron
         if codigo is not None:
             datos["codigo"] = codigo
+        self.regex_origen_cfg = self.regex_origen_cfg  # preservado
         datos["origen"] = self.var_origen.get().strip()
         datos["destino"] = self.var_destino.get().strip()
         datos["mapeo"] = self.var_mapeo.get().strip()
+        datos["modo"] = self.modo
+        datos["regex_origen"] = self.regex_origen_cfg
+        datos["regex_destino"] = self.regex_destino_cfg
         core.guardar_config(self.ruta_config, datos)
 
     # --- Formato de salida -------------------------------------------------------
@@ -711,6 +741,269 @@ class App:
         y = (self.root.winfo_screenheight() - h) // 3
         self.root.geometry(f"+{x}+{y}")
 
+    # --- Deteccion de identificadores (v1.3.0) ----------------------------------
+
+    ETIQUETAS_MODO = {
+        "auto": "Universal (recomendado)",
+        "radicado": "Radicado estricto",
+        "custom": "Personalizado (regex)",
+    }
+
+    def _regex_cargadas(self):
+        """Compila las regex del modo personalizado (o None)."""
+        if self.modo != core.MODO_CUSTOM:
+            return None, None
+        origen = core._compilar_regex(self.regex_origen_cfg or "", "origen")
+        destino = None
+        if self.regex_destino_cfg:
+            destino = core._compilar_regex(self.regex_destino_cfg, "destino")
+        return origen, destino
+
+    def _ventana_avanzada(self) -> None:
+        ventana = ctk.CTkToplevel(self.root)
+        ventana.title("Opciones avanzadas de deteccion")
+        ventana.geometry("620x560+120+80")
+        ventana.configure(fg_color=FONDO)
+        ventana.transient(self.root)
+        ventana.grab_set()
+
+        ctk.CTkLabel(
+            ventana,
+            text="MODO DE DETECCION DE IDENTIFICADORES",
+            font=FUENTE_SECCION, text_color=AZUL_OSCURO,
+        ).pack(anchor="w", padx=20, pady=(18, 4))
+        ctk.CTkLabel(
+            ventana,
+            text="Universal reconoce radicados, codigos y nombres libres.\n"
+                 "Cambie aqui solo si necesita una deteccion exacta.",
+            font=FUENTE_ESTADO, text_color=SEC,
+            justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 10))
+
+        var_modo = ctk.StringVar(value=self.ETIQUETAS_MODO[self.modo])
+        menu = ctk.CTkOptionMenu(
+            ventana, variable=var_modo,
+            values=list(self.ETIQUETAS_MODO.values()),
+            font=FUENTE_BASE, height=34, fg_color=AZUL_MEDIO,
+            button_color=AZUL_OSCURO, button_hover_color=AZUL_OSCURO,
+        )
+        menu.pack(fill="x", padx=20, pady=(0, 12))
+
+        marco_reg = ctk.CTkFrame(ventana, fg_color="white", corner_radius=10)
+        marco_reg.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+        marco_reg.columnconfigure(1, weight=1)
+        marco_reg.rowconfigure(0, weight=0)
+
+        lbl = ctk.CTkLabel(
+            marco_reg, text="Regex de ORIGEN (coincide con el inicio del nombre):",
+            font=FUENTE_ESTADO, text_color=GRIS_TXT,
+        )
+        lbl.grid(row=0, column=0, sticky="w", padx=14, pady=(12, 3))
+        ent_reo = ctk.CTkEntry(
+            marco_reg, font=("Consolas", 12), height=32, corner_radius=8,
+            fg_color="white", text_color=GRIS_TXT,
+            placeholder_text=r"ej. EXP-\d{4}-\d{3}",
+        )
+        ent_reo.grid(row=1, column=0, columnspan=2, sticky="ew", padx=14,
+                     pady=(0, 8))
+        ent_reo.insert(0, self.regex_origen_cfg or "")
+
+        ctk.CTkLabel(
+            marco_reg, text="Regex de DESTINO (coincide con la celda destino):",
+            font=FUENTE_ESTADO, text_color=GRIS_TXT,
+        ).grid(row=2, column=0, sticky="w", padx=14, pady=(2, 3))
+        ent_red = ctk.CTkEntry(
+            marco_reg, font=("Consolas", 12), height=32, corner_radius=8,
+            fg_color="white", text_color=GRIS_TXT,
+            placeholder_text=r"ej. (CT|EXP)-\d{4}-[0-9A-Z]+",
+        )
+        ent_red.grid(row=3, column=0, columnspan=2, sticky="ew", padx=14,
+                     pady=(0, 8))
+        ent_red.insert(0, self.regex_destino_cfg or "")
+
+        resultado = ctk.CTkLabel(
+            marco_reg, text="", font=("Consolas", 11), text_color=GRIS_TXT,
+            justify="left", anchor="w",
+        )
+        resultado.grid(row=4, column=0, columnspan=2, sticky="ew", padx=14,
+                       pady=(2, 12))
+
+        def actualizar_estado_reg():
+            es_custom = (
+                var_modo.get() == self.ETIQUETAS_MODO[core.MODO_CUSTOM]
+            )
+            estado = "normal" if es_custom else "disabled"
+            gris = "#8C6209" if not es_custom else SEC
+            ctk.CTkLabel(
+                marco_reg,
+                text=("Solo se usan en el modo Personalizado"
+                      if not es_custom else ""),
+                font=FUENTE_ESTADO, text_color=gris,
+            ).grid(row=0, column=1, sticky="e", pady=(12, 3))
+
+        def probar():
+            modo_sel = {v: k for k, v in self.ETIQUETAS_MODO.items()}.get(
+                var_modo.get(), core.MODO_AUTO
+            )
+            nombre = ent_prueba.get().strip() or "2026EE963171O1 1.pdf"
+            lineas = [f"Archivo de prueba : {nombre}"]
+            try:
+                regex_or = (
+                    core._compilar_regex(ent_reo.get().strip(), "origen")
+                    if modo_sel == core.MODO_CUSTOM else None
+                )
+                id_detectado = core.extraer_id_origen_flexible(
+                    nombre, modo_sel, regex_or
+                )
+                lineas.append(f"Origen detectado  : {id_detectado or '(no detectado)'}")
+            except ValueError as exc:
+                lineas.append(f"Error             : {exc}")
+
+            ruta_mapeo = self.var_mapeo.get().strip()
+            if ruta_mapeo and Path(ruta_mapeo).is_file():
+                try:
+                    regex_de = (
+                        core._compilar_regex(ent_red.get().strip(), "destino")
+                        if modo_sel == core.MODO_CUSTOM and ent_red.get().strip()
+                        else None
+                    )
+                    mapeo, conflictos, informe = core.cargar_mapeo_detallado(
+                        Path(ruta_mapeo), modo_sel, regex_or, regex_de
+                    )
+                    lineas.append(
+                        f"Excel             : {informe['pares']} pares, "
+                        f"{informe['conflictos']} conflictos, "
+                        f"{len(informe['saltadas'])} filas saltadas"
+                    )
+                except ValueError as exc:
+                    lineas.append(f"Excel             : error: {exc}")
+                except Exception:
+                    lineas.append(
+                        "Excel             : no se pudo leer (abierto o bloqueado)"
+                    )
+            resultado.configure(text="\n".join(lineas))
+
+        ctk.CTkLabel(
+            marco_reg, text="Archivo de prueba (nombre tal como llega):",
+            font=FUENTE_ESTADO, text_color=GRIS_TXT,
+        ).grid(row=5, column=0, sticky="w", padx=14, pady=(6, 3))
+        ent_prueba = ctk.CTkEntry(
+            marco_reg, font=("Consolas", 12), height=32, corner_radius=8,
+            fg_color="white", text_color=GRIS_TXT,
+        )
+        ent_prueba.grid(row=6, column=0, columnspan=2, sticky="ew", padx=14,
+                        pady=(0, 8))
+        ent_prueba.insert(0, "2026EE963171O1 1.pdf")
+        ctk.CTkButton(
+            marco_reg, text="Probar deteccion", command=probar,
+            fg_color=AZUL_MEDIO, hover_color=AZUL_OSCURO, text_color="white",
+            font=FUENTE_BASE, corner_radius=8, height=32, width=150,
+        ).grid(row=7, column=0, sticky="w", padx=14, pady=(0, 12))
+
+        actualizar_estado_reg()
+        menu.configure(command=lambda _v: actualizar_estado_reg())
+
+        def guardar():
+            modo_sel = {v: k for k, v in self.ETIQUETAS_MODO.items()}.get(
+                var_modo.get(), core.MODO_AUTO
+            )
+            self.modo = modo_sel
+            self.regex_origen_cfg = ent_reo.get().strip()
+            self.regex_destino_cfg = ent_red.get().strip()
+            self._persistir_config()
+            ventana.destroy()
+            self._estado(f"Modo de deteccion: {self.ETIQUETAS_MODO[modo_sel]}")
+
+        ctk.CTkButton(
+            ventana, text="Guardar", command=guardar,
+            fg_color=VERDE, hover_color=VERDE_HOVER, text_color="white",
+            font=FUENTE_BASE_NEG, corner_radius=8, height=36, width=140,
+        ).pack(pady=(0, 14))
+
+    def _verificar_excel(self) -> None:
+        """Dictamen estructural del Excel de correspondencia seleccionado."""
+        ruta = self.var_mapeo.get().strip()
+        if not ruta:
+            messagebox.showinfo(
+                TITULO, "Primero seleccione el Excel de correspondencia."
+            )
+            return
+        if not Path(ruta).is_file():
+            messagebox.showwarning(
+                TITULO,
+                "El Excel seleccionado no existe en esa ruta.\n\n"
+                "Vuelva a seleccionarlo con 'Examinar...'.",
+            )
+            return
+
+        try:
+            regex_or, regex_de = self._regex_cargadas()
+        except ValueError as exc:
+            messagebox.showwarning(TITULO, str(exc))
+            return
+
+        mapeo, conflictos, informe = None, None, None
+        try:
+            rutas = self._rutas_validas()
+            _src, _dst = rutas if rutas else (None, None)
+            mapeo, conflictos, informe = core.cargar_mapeo_detallado(
+                Path(ruta), self.modo, regex_or, regex_de
+            )
+        except ValueError as exc:
+            messagebox.showwarning(TITULO, str(exc))
+            return
+        except Exception as exc:
+            messagebox.showerror(TITULO, err.traducir_error_excel(exc))
+            return
+
+        lineas = [
+            "VERIFICACION DEL EXCEL",
+            f"Archivo        : {Path(ruta).name}",
+            f"Modo           : {self.ETIQUETAS_MODO[self.modo]}",
+            f"Filas leidas   : {informe['filas']}",
+            f"Pares validos  : {informe['pares']}",
+            f"Conflictos     : {informe['conflictos']}",
+        ]
+        if informe["saltadas"]:
+            lineas.append(f"Filas saltadas : {len(informe['saltadas'])}")
+            for num, motivo in informe["saltadas"][:6]:
+                lineas.append(f"   fila {num}: {motivo}")
+            if len(informe["saltadas"]) > 6:
+                lineas.append(
+                    f"   ...y {len(informe['saltadas']) - 6} mas"
+                )
+        for origen_id in list(conflictos)[:3]:
+            lineas.append(
+                f"   [CONFLICTO] {origen_id} -> "
+                f"{', '.join(conflictos[origen_id])}"
+            )
+        messagebox.showinfo(TITULO, "\n".join(lineas))
+        self._log("")
+        self._log("VERIFICACION DEL EXCEL:", "fase")
+        for linea in lineas[2:]:
+            tag = "sinmapeo" if "CONFLICTO" in linea else "info"
+            self._log(f"  {linea}", tag)
+
+    def _crear_plantilla(self) -> None:
+        ruta = filedialog.asksaveasfilename(
+            title="Guardar plantilla de correspondencia",
+            defaultextension=".xlsx",
+            initialfile="plantilla_correspondencia.xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+        )
+        if not ruta:
+            return
+        try:
+            core.crear_plantilla_excel(Path(ruta))
+        except Exception as exc:
+            messagebox.showerror(
+                TITULO, f"No se pudo crear la plantilla: {exc}"
+            )
+            return
+        self._log("")
+        self._log(f"Plantilla creada: {ruta}", "ruta")
+        self._estado("Plantilla de correspondencia creada")
+
     # --- Utilidades de interfaz -------------------------------------------------------
 
     def _log(self, msg: str, tag: str = "info") -> None:
@@ -778,6 +1071,11 @@ class App:
     # --- Acciones -------------------------------------------------------------------------
 
     def _accion_inventariar(self) -> None:
+        try:
+            regex_or, _regex_de = self._regex_cargadas()
+        except ValueError as exc:
+            messagebox.showwarning(TITULO, str(exc))
+            return
         rutas = self._rutas_validas()
         if not rutas:
             return
@@ -785,15 +1083,18 @@ class App:
         self._bloquear(True)
         self.txt.delete("1.0", "end")
         threading.Thread(
-            target=self._hilo_inventariar, args=(origen, destino), daemon=True
+            target=self._hilo_inventariar, args=(origen, destino, regex_or),
+            daemon=True,
         ).start()
 
-    def _hilo_inventariar(self, origen: Path, destino: Path) -> None:
+    def _hilo_inventariar(self, origen: Path, destino: Path,
+                          regex_or=None) -> None:
         try:
             self._linea_fase(f"INVENTARIO  |  {origen}")
             self.registros = core.inventariar(
                 origen, progreso=self._progreso,
                 cancelado=lambda: self._cancelar,
+                modo=self.modo, regex_origen=regex_or,
             )
             anom = core.listar_anomalias(self.registros)
             validos = len(self.registros) - len(anom)
@@ -865,21 +1166,39 @@ class App:
             messagebox.showwarning(TITULO, "El Excel de mapeo no existe.")
             return
 
+        try:
+            regex_or, regex_de = self._regex_cargadas()
+        except ValueError as exc:
+            messagebox.showwarning(TITULO, str(exc))
+            return
         self._bloquear(True)
         self._estado("Leyendo Excel de correspondencia...")
         threading.Thread(
-            target=self._hilo_simular, args=(origen, destino, ruta_excel),
+            target=self._hilo_simular,
+            args=(origen, destino, ruta_excel, regex_or, regex_de),
             daemon=True,
         ).start()
 
     def _hilo_simular(self, origen: Path, destino: Path,
-                      ruta_excel: Path) -> None:
+                      ruta_excel: Path, regex_or=None, regex_de=None) -> None:
         try:
             patron = self.var_patron.get()
             core.CODIGO_FIJO = self.var_codigo.get().strip()
 
             if self.mapeo is None or self.mapeo_ruta != str(ruta_excel):
-                mapeo, conflictos = core.cargar_mapeo_detallado(ruta_excel)
+                try:
+                    mapeo, conflictos, informe = core.cargar_mapeo_detallado(
+                        ruta_excel, self.modo, regex_or, regex_de
+                    )
+                except ValueError as exc:
+                    self._log(f"CONFIGURACION DE DETECCION INVALIDA: {exc}",
+                              "error")
+                    self._estado("Deteccion mal configurada")
+                    self.btn_sim.configure(state="normal")
+                    self.btn_inv.configure(state="normal")
+                    self._bloquear(False)
+                    messagebox.showwarning(TITULO, str(exc))
+                    return
                 self.mapeo = mapeo
                 self.conflictos = conflictos
                 self.mapeo_ruta = str(ruta_excel)

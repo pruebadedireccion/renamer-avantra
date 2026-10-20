@@ -75,7 +75,13 @@ def traducir_error_excel(exc: Exception) -> str:
 
 
 def leer_mapeo_con_reintentos(
-    ruta_excel: Path, intentos: int = 3, espera: float = 1.5, log=None
+    ruta_excel: Path,
+    intentos: int = 3,
+    espera: float = 1.5,
+    log=None,
+    modo: str = None,
+    regex_origen=None,
+    regex_destino=None,
 ):
     """
     Intenta leer el Excel hasta `intentos` veces con espera entre intentos.
@@ -88,7 +94,9 @@ def leer_mapeo_con_reintentos(
     ultimo_error: Exception | None = None
     for intento in range(1, intentos + 1):
         try:
-            mapeo = _cargar_mapeo_interno(ruta_excel)
+            mapeo = _cargar_mapeo_interno(
+                ruta_excel, modo, regex_origen, regex_destino
+            )
             return mapeo, ""
         except (PermissionError, OSError) as exc:
             ultimo_error = exc
@@ -109,38 +117,20 @@ def leer_mapeo_con_reintentos(
     return None, MSJ_EXCEL_BLOQUEADO
 
 
-def _cargar_mapeo_interno(ruta_excel: Path) -> dict[str, str]:
+def _cargar_mapeo_interno(
+    ruta_excel: Path,
+    modo: str = None,
+    regex_origen=None,
+    regex_destino=None,
+) -> dict[str, str]:
     """
-    Lectura tolerante del Excel de correspondencia.
-
-    A diferencia de la version estricta del core, esta:
-        - ignora hojas ilegibles (recorre todas las hojas)
-        - tolera filas corruptas
-        - solo falla si el archivo no se puede abrir en absoluto
+    Lectura del Excel de correspondencia con la deteccion por capas del
+    nucleo (radicado+numerico o regla general, segun el modo).
     """
-    wb = openpyxl.load_workbook(ruta_excel, read_only=True, data_only=True)
-    try:
-        mapeo: dict[str, str] = {}
-        from renamer_core import RE_ID_ORIGEN, RE_ID_DESTINO
+    import renamer_core as core
 
-        for ws in wb.worksheets:
-            try:
-                for fila in ws.iter_rows(values_only=True):
-                    if not fila:
-                        continue
-                    origen = destino = None
-                    for celda in fila:
-                        if celda is None:
-                            continue
-                        texto = str(celda).strip()
-                        if origen is None and RE_ID_ORIGEN.fullmatch(texto):
-                            origen = texto.upper()
-                        elif destino is None and RE_ID_DESTINO.fullmatch(texto):
-                            destino = texto
-                    if origen and destino:
-                        mapeo[origen] = destino
-            except Exception:  # noqa: BLE001 - hoja ilegible: pasar a la siguiente
-                continue
-        return mapeo
-    finally:
-        wb.close()
+    modo = modo or core.MODO_AUTO
+    mapeo, _conflictos, _informe = core.cargar_mapeo_detallado(
+        ruta_excel, modo, regex_origen, regex_destino
+    )
+    return mapeo

@@ -103,8 +103,9 @@ def test_mapeo_columnas_invertidas(tmp_path):
 def test_mapeo_vacio(tmp_path):
     ruta = tmp_path / "m.xlsx"
     crear_excel(ruta, [])
-    mapeo, conflictos = core.cargar_mapeo_detallado(ruta)
+    mapeo, conflictos, informe = core.cargar_mapeo_detallado(ruta)
     assert mapeo == {} and conflictos == {}
+    assert informe["pares"] == 0
 
 
 def test_mapeo_conflicto_detectado(tmp_path):
@@ -117,8 +118,9 @@ def test_mapeo_conflicto_detectado(tmp_path):
             ("2026XX840823X1", "9900000002"),
         ],
     )
-    mapeo, conflictos = core.cargar_mapeo_detallado(ruta)
+    mapeo, conflictos, informe = core.cargar_mapeo_detallado(ruta)
 
+    assert informe["conflictos"] == 1
     assert "2026XX840820X1" in conflictos
     assert conflictos["2026XX840820X1"] == ["9900000001", "9900000099"]
     assert "2026XX840820X1" not in mapeo
@@ -174,7 +176,7 @@ def test_plan_conflicto_queda_pendiente(carpeta, tmp_path):
             ("2026XX840820X1", "9900000099"),
         ],
     )
-    mapeo, conflictos = core.cargar_mapeo_detallado(ruta)
+    mapeo, conflictos, _informe = core.cargar_mapeo_detallado(ruta)
     plan = core.construir_plan(
         core.inventariar(origen), mapeo, "{id}", conflictos
     )
@@ -261,21 +263,33 @@ def test_pendientes_con_sugerencias(carpeta, tmp_path):
     ruta = tmp_path / "m.xlsx"
     crear_excel(ruta, [("2026XX840820X1", "9900000001")])
 
-    plan = core.construir_plan(
-        core.inventariar(origen), core.cargar_mapeo(ruta), "{id}"
-    )
+    regs = core.inventariar(origen)
+    plan = core.construir_plan(regs, core.cargar_mapeo(ruta), "{id}")
     n_pend, n_ids = core.escribir_pendientes(
         plan, destino / "pendientes_correccion.csv", destino / "ids.txt"
     )
 
+    # modo universal: BETA sin correspondencia y "sin_radicado" usa el
+    # nombre completo como origen; ambos quedan pendientes
     assert n_pend == 2
-    assert n_ids == 1
+    assert n_ids == 2
     contenido = (destino / "pendientes_correccion.csv").read_text(
         encoding="utf-8-sig"
     )
     assert "accion_sugerida" in contenido
     assert "Obtenga el identificador" in contenido
-    assert "no inicia" in contenido.lower() or "identificador de origen" in contenido
+    assert "sin correspondencia" in contenido.lower()
+
+
+def test_modo_radicado_estricto_rechaza_otros_nombres(carpeta, tmp_path):
+    origen, _ = carpeta
+    crear_pdf(origen, "2026XX840820X1 ACME.pdf")
+    crear_pdf(origen, "acta_de_reunion.pdf")
+    regs = core.inventariar(origen, modo=core.MODO_RADICADO)
+
+    por_estado = {r["archivo"]: r["anomalia"] for r in regs}
+    assert por_estado["2026XX840820X1 ACME.pdf"] is None
+    assert "No inicia" in por_estado["acta_de_reunion.pdf"]
 
 
 def test_cancelacion_copia(carpeta, tmp_path):

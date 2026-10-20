@@ -60,7 +60,7 @@ def test_reintentos_ante_bloqueo(monkeypatch, tmp_path):
     intentos = {"n": 0}
     original = err._cargar_mapeo_interno
 
-    def fallar_dos_veces(path):
+    def fallar_dos_veces(*args, **kwargs):
         intentos["n"] += 1
         if intentos["n"] < 3:
             raise PermissionError(13, "Permission denied")
